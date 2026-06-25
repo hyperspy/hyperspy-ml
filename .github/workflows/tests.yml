@@ -55,7 +55,7 @@ jobs:
       - name: Install
         shell: bash
         run: |
-          pip install --upgrade -e ".[dev,algorithms]"
+          pip install --upgrade -e ".[dev]"
 
       - name: Install oldest supported version
         if: ${{ matrix.OLDEST_SUPPORTED_VERSION }}
