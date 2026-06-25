@@ -4,8 +4,12 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 from hyperspy.signals import Signal1D, Signal2D
+
+_logger = logging.getLogger(__name__)
 
 
 def _make_signal_from_array(arr, source_signal=None):
@@ -31,7 +35,7 @@ def _make_signal_from_array(arr, source_signal=None):
                 s.axes_manager[0].units = sig_axes[0].units
                 s.axes_manager[0].name = sig_axes[0].name
         except Exception:
-            pass
+            _logger.warning("Could not transfer source axes calibration", exc_info=True)
     return s
 
 

@@ -147,7 +147,7 @@ class Study:
             try:
                 study[key] = load_result(sub)
             except Exception:
-                pass
+                _logger.warning("Failed to load result, skipping", exc_info=True)
         return study
 
 

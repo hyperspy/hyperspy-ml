@@ -1074,7 +1074,10 @@ class Decomposition:
             try:
                 signal.data = signal.data.compute()
             except Exception:
-                pass
+                _logger.warning(
+                    "Lazy data compute failed, retrying eager path",
+                    exc_info=True,
+                )
             return self._run()
 
         # -------------------------------------------------------------
