@@ -21,7 +21,6 @@ import importlib
 
 import numpy as np
 import pytest
-
 from hyperspy.signals import Signal1D
 
 sklearn = importlib.util.find_spec("sklearn")

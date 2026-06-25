@@ -21,7 +21,6 @@ import importlib
 import dask.array as da
 import numpy as np
 import pytest
-
 from hyperspy.exceptions import VisibleDeprecationWarning
 from hyperspy.learn._mva import _keenan_kotula_scale
 from hyperspy.signals import Signal1D

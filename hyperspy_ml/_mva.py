@@ -21,8 +21,6 @@ import logging
 import warnings
 
 import numpy as np
-from rsciio.utils import path
-
 from hyperspy import learn, signals
 from hyperspy.decorators import deprecated, deprecated_argument
 from hyperspy.defaults_parser import preferences
@@ -36,6 +34,7 @@ from hyperspy.docstrings.signal import (
 from hyperspy.exceptions import VisibleDeprecationWarning
 from hyperspy.external.progressbar import progressbar
 from hyperspy.misc import utils
+from rsciio.utils import path
 
 MDP_INSTALLED = importlib.util.find_spec("mdp") is not None
 SKLEARN_INSTALLED = importlib.util.find_spec("sklearn") is not None

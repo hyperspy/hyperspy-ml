@@ -19,7 +19,6 @@
 import numpy as np
 import pytest
 import scipy.linalg
-
 from hyperspy.exceptions import VisibleDeprecationWarning
 from hyperspy.learn._rpca import ORPCA, orpca, rpca_godec
 from hyperspy.signals import Signal1D

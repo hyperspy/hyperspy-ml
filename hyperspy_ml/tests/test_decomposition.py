@@ -23,7 +23,6 @@ from tempfile import TemporaryDirectory
 import dask.array as da
 import numpy as np
 import pytest
-
 from hyperspy import signals
 from hyperspy.decorators import lazifyTestClass
 from hyperspy.exceptions import VisibleDeprecationWarning

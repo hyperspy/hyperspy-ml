@@ -1,0 +1,82 @@
+name: Tests
+
+on:
+  push:
+    branches-ignore:
+      - 'dependabot/**'
+      - 'pre-commit-ci-update-config'
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}-${{ matrix.os_version }}-py${{ matrix.PYTHON_VERSION }}${{ matrix.LABEL }}
+    runs-on: ${{ matrix.os }}-${{ matrix.os_version }}
+    timeout-minutes: 30
+    env:
+      MPLBACKEND: agg
+      PYTEST_ARGS: hyperspy_ml/tests --reruns 3 --instafail
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu, windows, macos]
+        os_version: [latest]
+        PYTHON_VERSION: ['3.11', '3.13']
+        include:
+          # test oldest supported version of main dependencies
+          - os: ubuntu
+            os_version: latest
+            PYTHON_VERSION: '3.10'
+            OLDEST_SUPPORTED_VERSION: true
+            DEPENDENCIES: hyperspy==2.4.0 hyperspy-ml-algorithms==0.1.0 scikit-learn==1.6.0 matplotlib==3.5.0 array-api-compat==1.9.0 zarr==2.16.0
+            LABEL: -oldest
+          - os: ubuntu
+            os_version: latest
+            PYTHON_VERSION: '3.10'
+          - os: ubuntu
+            os_version: latest
+            PYTHON_VERSION: '3.12'
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v6
+        name: Install Python
+        with:
+          python-version: ${{ matrix.PYTHON_VERSION }}
+
+      - name: Display version
+        run: |
+          python --version
+          pip --version
+
+      - name: Install
+        shell: bash
+        run: |
+          pip install --upgrade -e ".[dev]"
+
+      - name: Install oldest supported version
+        if: ${{ matrix.OLDEST_SUPPORTED_VERSION }}
+        run: |
+          pip install ${{ matrix.DEPENDENCIES }}
+
+      - name: Pip list
+        run: |
+          pip list
+
+      - name: Run test suite
+        run: |
+          pytest ${{ env.PYTEST_ARGS }} -n auto --cov=hyperspy_ml --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Lint
+        run: |
+          pip install ruff
+          ruff check hyperspy_ml/
+          ruff format --check hyperspy_ml/

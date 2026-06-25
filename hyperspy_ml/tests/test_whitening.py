@@ -18,7 +18,6 @@
 
 import numpy as np
 import pytest
-
 from hyperspy.learn._whitening import whiten_data
 
 

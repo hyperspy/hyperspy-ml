@@ -18,7 +18,6 @@
 
 import numpy as np
 import pytest
-
 from hyperspy.exceptions import VisibleDeprecationWarning
 from hyperspy.learn._ornmf import ORNMF, ornmf
 from hyperspy.signals import Signal1D

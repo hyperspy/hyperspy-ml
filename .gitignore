@@ -1,0 +1,72 @@
+syntax: glob
+*~
+*.bak
+*.deb
+*.mex
+*nbc
+*nbi
+*.o
+*.pyc
+*.pyd
+*.pyproj
+*.so
+*.swo
+*.swp
+*.DS_Store
+*__pycache__
+*Thumbs.db
+/.cache/
+/.spyproject/
+.coverage
+.hook_ignore*
+.idea/*
+.python-version
+.ropeproject/*
+.spyderproject
+.spyderworkspace
+~.vimrc
+desktop.ini
+dist
+/MANIFEST
+build/*
+*.egg-info/*
+data/octave-core
+deb_dist/*
+doc/auto_examples
+doc/backreferences
+doc/_build
+doc/log.txt
+
+### Code ###
+# Visual Studio Code - https://code.visualstudio.com/
+.settings/
+.vscode/
+tsconfig.json
+jsconfig.json
+*egg-info*
+*__pycache__*
+
+*sg_execution_times.rst
+
+# virtual environments
+venv/
+
+# AI coding tools — runtime state and personal files
+.omc/
+.omo/
+.sisyphus/*
+!.sisyphus/rules/
+
+# Claude Code — all files (conventions live in AGENTS.md)
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+
+# Aider — personal history and cache
+.aider.chat.history.md
+.aider.tags.cache.v*
+# Uncomment below if .aider.conf.yml is local-only:
+# .aider.conf.yml
+
+# Ruff cache
+.ruff_cache/

@@ -18,7 +18,6 @@
 
 import numpy as np
 import pytest
-
 from hyperspy import signals
 
 try:

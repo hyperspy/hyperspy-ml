@@ -1,0 +1,159 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools_scm>=8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+authors = [{name = "The HyperSpy Community"}]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "array-api-compat>=1.9",
+    "hyperspy>=2.4",
+    "hyperspy-ml-algorithms>=0.1",
+    "matplotlib>=3.5",
+    "scikit-learn>=1.6",
+    "zarr>=2.16",
+]
+description = "Machine learning extension for HyperSpy — MVA decomposition, BSS, and clustering"
+dynamic = ["version"]
+keywords = [
+    "PCA",
+    "SVD",
+    "NMF",
+    "RPCA",
+    "MLPCA",
+    "machine learning",
+    "decomposition",
+    "BSS",
+    "clustering",
+    "hyperspectral",
+]
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+name = "hyperspy-ml"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+all = [
+    "hyperspy-ml[dev]",
+    "hyperspy-ml[dask]",
+    "hyperspy-ml[gpu]",
+    "hyperspy-ml[doc]",
+]
+coverage = [
+    "pytest-cov",
+]
+dask = [
+    "dask-image",
+]
+dev = [
+    "ruff",
+    "hyperspy-ml[all]",
+    "hyperspy-ml[coverage]",
+    "hyperspy-ml[doc]",
+    "hyperspy-ml[tests]",
+]
+doc = [
+    "numpydoc",
+    "pydata_sphinx_theme",
+    "sphinx>=7.0",
+    "sphinx-copybutton",
+    "sphinx-design",
+    "sphinxcontrib-towncrier>=0.5.0a0",
+    "towncrier",
+]
+gpu = [
+    "cupy-cuda12x",
+    "torch>=2.0",
+]
+tests = [
+    "pytest>=3.6",
+    "pytest-instafail",
+    "pytest-rerunfailures",
+    "pytest-xdist",
+    "setuptools_scm",
+]
+
+[project.urls]
+"Bug Reports" = "https://github.com/hyperspy/hyperspy-ml/issues"
+Documentation = "https://hyperspy-ml.readthedocs.io"
+Homepage = "https://hyperspy.org"
+Source = "https://github.com/hyperspy/hyperspy-ml"
+
+[tool.coverage.report]
+precision = 2
+
+[tool.coverage.run]
+branch = true
+omit = [
+    "hyperspy_ml/tests/*",
+]
+source = ["hyperspy_ml"]
+
+[tool.pytest.ini_options]
+addopts = "-ra -n auto --dist loadfile"
+filterwarnings = [
+    "ignore:Matplotlib is currently using agg:UserWarning",
+]
+testpaths = ["hyperspy_ml/tests"]
+norecursedirs = [
+    "doc/_build/*",
+]
+xfail_strict = false
+doctest_optionflags = [
+    "IGNORE_EXCEPTION_DETAIL",
+    "NORMALIZE_WHITESPACE",
+    "ELLIPSIS",
+]
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    # Pyflakes
+    "F",
+    # Pycodestyle
+    "E",
+    "W",
+    # isort
+    "I",
+]
+# Rely on the formatter to define line-length
+# and avoid conflicting lint rules
+# https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules
+extend-ignore = ["E501"]
+
+[tool.setuptools.packages.find]
+include = ["hyperspy_ml*"]
+where = ["."]
+
+[tool.setuptools_scm]
+fallback_version = "0.1.0.dev0"
+
+[tool.towncrier]
+directory = "upcoming_changes/"
+filename = "CHANGES.rst"
+issue_format = "`#{issue} <https://github.com/hyperspy/hyperspy-ml/issues/{issue}>`_"
+package = "hyperspy_ml"
+title_format = "{version} ({project_date})"
+type = [
+    { directory = "new", name = "New features", showcontent = true },
+    { directory = "enhancements", name = "Enhancements", showcontent = true },
+    { directory = "bugfix", name = "Bug Fixes", showcontent = true },
+    { directory = "api", name = "API changes", showcontent = true },
+    { directory = "deprecation", name = "Deprecations", showcontent = true },
+    { directory = "doc", name = "Improved Documentation", showcontent = true },
+    { directory = "maintenance", name = "Maintenance", showcontent = true },
+]

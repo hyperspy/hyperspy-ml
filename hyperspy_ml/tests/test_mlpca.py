@@ -18,7 +18,6 @@
 
 import numpy as np
 import pytest
-
 from hyperspy.learn._mlpca import mlpca
 from hyperspy.signals import Signal1D
 

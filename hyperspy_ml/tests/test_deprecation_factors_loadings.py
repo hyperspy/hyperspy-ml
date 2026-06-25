@@ -25,7 +25,6 @@ from tempfile import TemporaryDirectory
 
 import numpy as np
 import pytest
-
 from hyperspy import signals
 from hyperspy.api import load as hs_load
 from hyperspy.exceptions import VisibleDeprecationWarning
