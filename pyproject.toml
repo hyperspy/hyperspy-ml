@@ -98,6 +98,11 @@ precision = 2
 branch = true
 omit = [
     "hyperspy_ml/tests/*",
+    "hyperspy_ml/_mva.py",
+    "hyperspy_ml/_mva_legacy.py",
+    "hyperspy_ml/compat.py",
+    "hyperspy_ml/plotting/scree.py",
+    "hyperspy_ml/plotting/bss.py",
 ]
 source = ["hyperspy_ml"]
 

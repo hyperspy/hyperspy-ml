@@ -53,9 +53,9 @@ def _get_scores(result, idx=None):
 
 def _get_bss_components(result, idx=None):
     """Return BSS components."""
-    c = np.asarray(result.bss_components, dtype=float)
-    if c is None:
+    if result.bss_components is None:
         raise ValueError("No BSS results available")
+    c = np.asarray(result.bss_components, dtype=float)
     if idx is not None:
         return c[:, idx]
     return c
@@ -63,9 +63,9 @@ def _get_bss_components(result, idx=None):
 
 def _get_bss_scores(result, idx=None):
     """Return BSS scores."""
-    s = np.asarray(result.bss_scores, dtype=float)
-    if s is None:
+    if result.bss_scores is None:
         raise ValueError("No BSS results available")
+    s = np.asarray(result.bss_scores, dtype=float)
     if idx is not None:
         return s[:, idx]
     return s
