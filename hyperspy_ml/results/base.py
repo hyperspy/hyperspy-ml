@@ -932,12 +932,144 @@ class DecompositionResult:
 
     def save(self, path, source_signal=None):
         """Save to a .hsml Zarr store."""
-        save_result(self, path, source_signal=source_signal or self._source_signal)
+        from hyperspy_ml.results.io import save_result as _save
+
+        _save(self, path, source_signal=source_signal or self._source_signal)
 
     @classmethod
     def load(cls, path):
         """Load from a .hsml Zarr store."""
-        return load_result(path)
+        from hyperspy_ml.results.io import load_result as _load
+
+        return _load(path)
+
+    # ------------------------------------------------------------------
+    # Plotting
+    # ------------------------------------------------------------------
+
+    def plot_components(self, **kwargs):
+        """Plot decomposition components."""
+        from hyperspy_ml.plotting.components import plot_decomposition_components
+
+        return plot_decomposition_components(self, **kwargs)
+
+    def plot_scores(self, nav_shape=None, **kwargs):
+        """Plot decomposition scores."""
+        from hyperspy_ml.plotting.components import plot_decomposition_scores
+
+        return plot_decomposition_scores(self, nav_shape=nav_shape, **kwargs)
+
+    def plot_bss_components(self, **kwargs):
+        """Plot BSS components."""
+        from hyperspy_ml.plotting.components import plot_bss_components
+
+        return plot_bss_components(self, **kwargs)
+
+    def plot_bss_scores(self, nav_shape=None, **kwargs):
+        """Plot BSS scores."""
+        from hyperspy_ml.plotting.components import plot_bss_scores
+
+        return plot_bss_scores(self, nav_shape=nav_shape, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Deprecated aliases
+    # ------------------------------------------------------------------
+
+    def plot_decomposition_factors(self, *args, **kwargs):
+        """Deprecated: use plot_components()."""
+        warnings.warn(
+            "plot_decomposition_factors() is deprecated, use plot_components().",
+            VisibleDeprecationWarning,
+            stacklevel=2,
+        )
+        return self.plot_components(*args, **kwargs)
+
+    def plot_decomposition_loadings(self, *args, **kwargs):
+        """Deprecated: use plot_scores()."""
+        warnings.warn(
+            "plot_decomposition_loadings() is deprecated, use plot_scores().",
+            VisibleDeprecationWarning,
+            stacklevel=2,
+        )
+        return self.plot_scores(*args, **kwargs)
+
+    def plot_bss_factors(self, *args, **kwargs):
+        """Deprecated: use plot_bss_components()."""
+        warnings.warn(
+            "plot_bss_factors() is deprecated, use plot_bss_components().",
+            VisibleDeprecationWarning,
+            stacklevel=2,
+        )
+        return self.plot_bss_components(*args, **kwargs)
+
+    def plot_bss_loadings(self, *args, **kwargs):
+        """Deprecated: use plot_bss_scores()."""
+        warnings.warn(
+            "plot_bss_loadings() is deprecated, use plot_bss_scores().",
+            VisibleDeprecationWarning,
+            stacklevel=2,
+        )
+        return self.plot_bss_scores(*args, **kwargs)
+
+    def get_components(self, idx=None):
+        """Return components as array."""
+        c = np.asarray(self.components, dtype=float)
+        return c[:, idx] if idx is not None else c
+
+    def get_scores(self, idx=None):
+        """Return scores as array."""
+        s = np.asarray(self.scores, dtype=float)
+        return s[:, idx] if idx is not None else s
+
+    def get_decomposition_components(self, idx=None):
+        return self.get_components(idx)
+
+    def get_decomposition_scores(self, idx=None):
+        return self.get_scores(idx)
+
+    def get_decomposition_factors(self, *args, **kwargs):
+        warnings.warn(
+            "get_decomposition_factors() is deprecated, use get_components().",
+            VisibleDeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_components(*args, **kwargs)
+
+    def get_decomposition_loadings(self, *args, **kwargs):
+        warnings.warn(
+            "get_decomposition_loadings() is deprecated, use get_scores().",
+            VisibleDeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_scores(*args, **kwargs)
+
+    def get_bss_components(self, idx=None):
+        if self.bss_components is None:
+            raise ValueError("No BSS results available")
+        c = np.asarray(self.bss_components, dtype=float)
+        return c[:, idx] if idx is not None else c
+
+    def get_bss_scores(self, idx=None):
+        if self.bss_scores is None:
+            raise ValueError("No BSS results available")
+        s = np.asarray(self.bss_scores, dtype=float)
+        return s[:, idx] if idx is not None else s
+
+    def get_bss_factors(self, *args, **kwargs):
+        warnings.warn(
+            "get_bss_factors() is deprecated, use get_bss_components().",
+            VisibleDeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_bss_components(*args, **kwargs)
+
+    def get_bss_loadings(self, *args, **kwargs):
+        warnings.warn(
+            "get_bss_loadings() is deprecated, use get_bss_scores().",
+            VisibleDeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_bss_scores(*args, **kwargs)
 
 
 @dataclass
@@ -1052,6 +1184,40 @@ class ClusterResult:
     @classmethod
     def load(cls, path):
         return load_result(path)
+
+    def plot_cluster_signals(self, **kwargs):
+        from hyperspy_ml.plotting.cluster import plot_cluster_signals as _p
+
+        return _p(self, **kwargs)
+
+    def plot_cluster_labels(self, nav_shape=None, **kwargs):
+        from hyperspy_ml.plotting.cluster import plot_cluster_labels as _p
+
+        return _p(self, nav_shape=nav_shape, **kwargs)
+
+    def plot_cluster_distances(self, nav_shape=None, **kwargs):
+        from hyperspy_ml.plotting.cluster import plot_cluster_distances as _p
+
+        return _p(self, nav_shape=nav_shape, **kwargs)
+
+    def get_cluster_labels(self):
+        return (
+            np.asarray(self.cluster_labels) if self.cluster_labels is not None else None
+        )
+
+    def get_cluster_signals(self):
+        return (
+            np.asarray(self.cluster_sum_signals)
+            if self.cluster_sum_signals is not None
+            else None
+        )
+
+    def get_cluster_distances(self):
+        return (
+            np.asarray(self.cluster_distances)
+            if self.cluster_distances is not None
+            else None
+        )
 
 
 class _ResultEvents:
