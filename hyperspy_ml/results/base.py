@@ -107,6 +107,17 @@ class DecompositionResult:
     _nav_shape: tuple | None = field(default=None, repr=False)
     _source_signal: Any = field(default=None, repr=False)
     _data_before_treatments: Any = field(default=None, repr=False)
+    number_significant_components: int | None = None
+    poissonian_noise_normalized: bool = False
+    output_dimension: int | None = None
+    navigation_mask: np.ndarray | None = None
+    signal_mask: np.ndarray | None = None
+    unmixing_matrix: np.ndarray | None = None
+    bss_algorithm: str | None = None
+    unfolded: bool = False
+    original_shape: tuple | None = None
+    _source_hash: str | None = field(default=None, repr=False)
+    _stage: Any = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Initialise the events namespace."""
@@ -867,6 +878,67 @@ class DecompositionResult:
             self.scores[:, i] *= -1
         self._notify_data_changed()
 
+    def write_to_signal(self, signal):
+        """Populate the legacy ``learning_results`` on *signal*.
+
+        Opt-in bridge for HyperSpy next-minor compatibility.
+        """
+        lr = signal.learning_results
+        lr.components = (
+            np.asarray(self.components) if self.components is not None else None
+        )
+        lr.scores = np.asarray(self.scores) if self.scores is not None else None
+        lr.explained_variance = self.explained_variance
+        lr.explained_variance_ratio = self.explained_variance_ratio
+        lr.mean = self.mean
+        lr.decomposition_algorithm = self.algorithm
+        lr.output_dimension = self.output_dimension or self.n_components
+        lr.centre = self.centre
+        lr.poissonian_noise_normalized = self.poissonian_noise_normalized
+        lr.navigation_mask = self.navigation_mask
+        lr.signal_mask = self.signal_mask
+        if self.bss_components is not None:
+            lr.bss_components = np.asarray(self.bss_components)
+            lr.bss_scores = np.asarray(self.bss_scores)
+        if self.unmixing_matrix is not None:
+            lr.unmixing_matrix = self.unmixing_matrix
+
+    def summary(self):
+        """Return a string summarising the decomposition results."""
+        lines = [
+            "Decomposition parameters",
+            "------------------------",
+            f"normalize_poissonian_noise={self.poissonian_noise_normalized}",
+            f"algorithm={self.algorithm}",
+            f"output_dimension={self.output_dimension or self.n_components}",
+            f"centre={self.centre}",
+        ]
+        if self.bss_components is not None:
+            lines += [
+                "",
+                "Demixing parameters",
+                "-------------------",
+                f"algorithm={getattr(self, 'bss_algorithm', 'N/A')}",
+                f"n_components={self.bss_components.shape[1]}",
+            ]
+        return "\n".join(lines)
+
+    def __repr__(self):
+        return self.summary()
+
+    # ------------------------------------------------------------------
+    # Zarr (.hsml) save/load entry points
+    # ------------------------------------------------------------------
+
+    def save(self, path, source_signal=None):
+        """Save to a .hsml Zarr store."""
+        save_result(self, path, source_signal=source_signal or self._source_signal)
+
+    @classmethod
+    def load(cls, path):
+        """Load from a .hsml Zarr store."""
+        return load_result(path)
+
 
 @dataclass
 class BSSResult:
@@ -894,9 +966,26 @@ class BSSResult:
     bss_algorithm: str | None = None
     on_scores: bool = False
     params: dict[str, Any] = field(default_factory=dict)
+    _source_hash: str | None = field(default=None, repr=False)
+    _stage: Any = field(default=None, repr=False)
+    _nav_shape: tuple | None = field(default=None, repr=False)
+    _source_signal: Any = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "events", _ResultEvents())
+
+    def summary(self):
+        return f"BSS params\n---------\nalgorithm={self.bss_algorithm}\nn_components={self.bss_components.shape[1] if self.bss_components is not None else 'N/A'}"
+
+    def __repr__(self):
+        return self.summary()
+
+    def save(self, path, source_signal=None):
+        save_result(self, path, source_signal=source_signal or self._source_signal)
+
+    @classmethod
+    def load(cls, path):
+        return load_result(path)
 
 
 @dataclass
@@ -943,12 +1032,215 @@ class ClusterResult:
     cluster_metric_data: np.ndarray | None = None
     estimated_number_of_clusters: int | None = None
     params: dict[str, Any] = field(default_factory=dict)
+    _source_hash: str | None = field(default=None, repr=False)
+    _stage: Any = field(default=None, repr=False)
+    _nav_shape: tuple | None = field(default=None, repr=False)
+    _source_signal: Any = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "events", _ResultEvents())
 
+    def summary(self):
+        return f"Cluster params\n--------------\nalgorithm={self.cluster_algorithm}\nn_clusters={self.number_of_clusters}\nmetric={self.cluster_metric}"
+
+    def __repr__(self):
+        return self.summary()
+
+    def save(self, path, source_signal=None):
+        save_result(self, path, source_signal=source_signal or self._source_signal)
+
+    @classmethod
+    def load(cls, path):
+        return load_result(path)
+
 
 class _ResultEvents:
-    """Minimal events namespace for result containers."""
+    """Events namespace for result containers with data_changed event."""
 
-    data_changed: bool = False
+    def __init__(self) -> None:
+        self._callbacks: list = []
+        self._fired = False
+
+    @property
+    def data_changed(self):
+        return self._fired
+
+    @data_changed.setter
+    def data_changed(self, value):
+        self._fired = bool(value)
+        if value:
+            for cb in self._callbacks:
+                cb()
+
+    def connect(self, callback):
+        """Register a data-changed callback."""
+        self._callbacks.append(callback)
+
+    def disconnect(self, callback):
+        """Unregister a callback."""
+        self._callbacks.remove(callback)
+
+
+# ==========================================================================
+# .hsml schema v1 — Zarr-based save/load for result objects
+# ==========================================================================
+
+HSML_VERSION = "1.0"
+
+
+def _get_source_hash(signal) -> str:
+    """Compute a SHA-256 hash of the signal's data for deduplication."""
+    import hashlib
+
+    data = signal.data
+    if hasattr(data, "compute"):
+        data = data.compute()
+    return hashlib.sha256(np.asarray(data, dtype=np.float64).tobytes()).hexdigest()[:16]
+
+
+def save_result(result, path, source_signal=None):
+    """Save a result object as a .hsml Zarr store.
+
+    Parameters
+    ----------
+    result : DecompositionResult, BSSResult, or ClusterResult
+    path : str or Path
+        Directory for the Zarr store.
+    source_signal : BaseSignal or None
+        If provided, the signal data is stored in ``sources/<hash>/``
+        for deduplication.
+    """
+    import json
+
+    import zarr
+
+    store = zarr.open(path, mode="w")
+
+    # Root attributes
+    store.attrs["hsml_version"] = HSML_VERSION
+    store.attrs["type"] = type(result).__name__
+
+    # Save all numpy-array fields
+    for name in _array_field_names(type(result)):
+        value = getattr(result, name, None)
+        if value is not None:
+            arr = np.asarray(value)
+            store.create(name, data=arr, overwrite=True)
+
+    # Save scalar fields as JSON
+    scalar_attrs = {}
+    for name in _scalar_field_names(type(result)):
+        value = getattr(result, name, None)
+        if value is not None:
+            scalar_attrs[name] = value
+    store.attrs["scalars"] = json.dumps(scalar_attrs)
+
+    # Save params as JSON
+    if result.params:
+        store.attrs["params"] = json.dumps(result.params)
+
+    # Save axes metadata if source signal is available
+    sig = source_signal or getattr(result, "_source_signal", None)
+    if sig is not None:
+        axes_data = {
+            "navigation_shape": sig.axes_manager.navigation_shape,
+            "signal_shape": sig.axes_manager.signal_shape,
+            "navigation_dimension": sig.axes_manager.navigation_dimension,
+            "signal_dimension": sig.axes_manager.signal_dimension,
+        }
+        store.attrs["axes"] = json.dumps(axes_data)
+
+    # Deduplicate source data
+    if sig is not None:
+        src_hash = _get_source_hash(sig)
+        result._source_hash = src_hash
+        store.attrs["source_hash"] = src_hash
+        src_group = store.require_group("sources")
+        if src_hash not in src_group:
+            src_val = sig.data
+            if hasattr(src_val, "compute"):
+                src_val = src_val.compute()
+            src_group.create(src_hash, data=np.asarray(src_val))
+
+
+def load_result(path):
+    """Load a result object from a .hsml Zarr store.
+
+    Parameters
+    ----------
+    path : str or Path
+
+    Returns
+    -------
+    result : DecompositionResult, BSSResult, or ClusterResult
+
+    Raises
+    ------
+    OSError
+        If the major version in the file does not match the current version.
+    """
+    import json
+
+    import zarr
+
+    store = zarr.open(path, mode="r")
+
+    # Version check
+    file_version = store.attrs.get("hsml_version", "0.0")
+    if file_version.split(".")[0] != HSML_VERSION.split(".")[0]:
+        raise OSError(
+            f"Cannot load .hsml file: version {file_version} "
+            f"is incompatible with current version {HSML_VERSION}. "
+            "The major version number must match."
+        )
+
+    result_type = store.attrs.get("type", "DecompositionResult")
+    type_map = {
+        "DecompositionResult": DecompositionResult,
+        "BSSResult": BSSResult,
+        "ClusterResult": ClusterResult,
+    }
+    cls = type_map.get(result_type, DecompositionResult)
+
+    # Load array fields (lazy — dask-backed Zarr arrays)
+    kwargs: dict[str, Any] = {}
+    for name in _array_field_names(cls):
+        if name in store:
+            kwargs[name] = store[name][:]
+
+    # Load scalar fields
+    scalars_json = store.attrs.get("scalars", "{}")
+    scalars = json.loads(scalars_json)
+    kwargs.update(scalars)
+
+    # Load params
+    params_json = store.attrs.get("params", "{}")
+    kwargs["params"] = json.loads(params_json)
+
+    # Load source hash
+    kwargs["_source_hash"] = store.attrs.get("source_hash", None)
+
+    return cls(**kwargs)
+
+
+def _array_field_names(cls):
+    """Return the names of fields that hold numpy arrays."""
+    return [
+        f.name
+        for f in cls.__dataclass_fields__.values()
+        if "ndarray" in str(f.type) or "np.ndarray" in str(f.type)
+    ]
+
+
+def _scalar_field_names(cls):
+    """Return the names of scalar (non-array, non-dict, non-private) fields."""
+    return [
+        f.name
+        for f in cls.__dataclass_fields__.values()
+        if f.name not in _array_field_names(cls)
+        and not f.name.startswith("_")
+        and f.name != "params"
+        and "ndarray" not in str(f.type)
+        and "np.ndarray" not in str(f.type)
+        and "dict" not in str(f.type).lower()
+    ]
