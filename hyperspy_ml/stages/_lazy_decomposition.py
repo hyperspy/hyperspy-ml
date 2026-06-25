@@ -221,6 +221,8 @@ def _lazy_svd_matrix(
 
         # Use the synchronous scheduler for svd_compressed to
         # avoid materialising the full dataset in memory.
+        if output_dimension is None:
+            output_dimension = min(D.shape)
         with dask.config.set(scheduler="synchronous"):
             U, S, V = da.linalg.svd_compressed(D, k=output_dimension)
             U, S, V = dask.compute(U, S, V)

@@ -405,10 +405,10 @@ class Clustering:
             ref_inertia = np.zeros(len(k_range))
             ref_std = np.zeros(len(k_range))
             data_inertia = np.zeros(len(k_range))
-            ref = np.zeros(scaled_data.shape)
+            ref = np.zeros(scaled_data.data.shape)
             local_inertia = np.zeros(n_ref)
 
-            for f_idx in range(scaled_data.shape[1]):
+            for f_idx in range(scaled_data.data.shape[1]):
                 xmin = np.min(scaled_data[:, f_idx])
                 xmax = np.max(scaled_data[:, f_idx])
                 ref[:, f_idx] = np.linspace(xmin, xmax, endpoint=True, num=ref.shape[0])

@@ -48,6 +48,64 @@ SKLEARN_INSTALLED = importlib.util.find_spec("sklearn") is not None
 _MDP_ALGORITHMS = frozenset({"FastICA", "JADE", "CuBICA", "TDSEP"})
 
 
+def _orthomax(A, gamma=1.0, reltol=1.4901e-07, maxit=256):
+    """Orthogonal rotation of FA or PCA loadings (varimax when gamma=1).
+
+    Ported from the original ``hyperspy.misc.utils.orthomax``
+    (commit ee35e4411).  Returns ``(B, T)`` where *B* is the rotated
+    loadings matrix and *T* the orthogonal rotation matrix.
+    """
+    d, m = A.shape
+    B = A.copy()
+    T = np.eye(m)
+
+    if 0 <= gamma <= 1:
+        # Fast Lawley & Maxwell iteration
+        converged = False
+        while not converged:
+            D = 0.0
+            for _k in range(1, maxit + 1):
+                Dold = D
+                tmp11 = np.sum(B**2, axis=0)
+                tmp1 = np.diag(np.array(tmp11).flatten())
+                tmp2 = gamma * B
+                tmp3 = d * B**3
+                L, Dvals, M = np.linalg.svd(A.T @ (tmp3 - tmp2 @ tmp1))
+                T = L @ M
+                D = np.sum(Dvals)
+                B = A @ T
+                if np.abs(D - Dold) / D < reltol:
+                    converged = True
+                    break
+    else:
+        # Sequence of bivariate rotations
+        for _iter in range(1, maxit + 1):
+            maxTheta = 0.0
+            for i in range(0, m - 1):
+                for j in range(i + 1, m):
+                    Bi = B[:, i]
+                    Bj = B[:, j]
+                    u = Bi**2 - Bj**2
+                    v = 2 * Bi * Bj
+                    usum = u.sum()
+                    vsum = v.sum()
+                    numer = 2 * u @ v - 2 * gamma * usum * vsum / d
+                    denom = u @ u - v @ v - gamma * (usum**2 - vsum**2) / d
+                    theta = np.arctan2(numer, denom) / 4
+                    maxTheta = max(maxTheta, np.abs(theta))
+                    Tij = np.array(
+                        [
+                            [np.cos(theta), -np.sin(theta)],
+                            [np.sin(theta), np.cos(theta)],
+                        ]
+                    )
+                    B[:, [i, j]] = B[:, [i, j]] @ Tij
+                    T[:, [i, j]] = T[:, [i, j]] @ Tij
+            if maxTheta < reltol:
+                break
+    return B, T
+
+
 class BSS:
     """Standalone blind source separation stage.
 
@@ -237,8 +295,6 @@ class BSS:
         to_return_info = None
 
         if algorithm == "orthomax":
-            from hyperspy.learn import orthomax as _orthomax
-
             _, unmixing_matrix = _orthomax(factors_data, **kw)
 
         elif algorithm == "sklearn_fastica":
