@@ -18,6 +18,8 @@
 
 """ML pipeline stages — standalone, testable building blocks."""
 
+from hyperspy_ml.stages.bss import BSS
+from hyperspy_ml.stages.clustering import Clustering
 from hyperspy_ml.stages.decomposition import Decomposition
 
-__all__ = ["Decomposition"]
+__all__ = ["Decomposition", "BSS", "Clustering"]

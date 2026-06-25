@@ -868,6 +868,86 @@ class DecompositionResult:
         self._notify_data_changed()
 
 
+@dataclass
+class BSSResult:
+    """Container for blind source separation output.
+
+    Attributes
+    ----------
+    bss_components : ndarray, shape (signal_channels, n_components)
+        Independent component spectra / factors.
+    bss_scores : ndarray, shape (navigation_pixels, n_components)
+        Independent component loadings / scores.
+    unmixing_matrix : ndarray or None, shape (n_components, n_components)
+        Matrix mapping decomposition → independent components.
+    bss_algorithm : str or None
+        Name of the BSS algorithm used.
+    on_scores : bool, default False
+        Whether BSS was applied on scores (True) or components (False).
+    params : dict
+        Stage parameters for provenance.
+    """
+
+    bss_components: np.ndarray | None = None
+    bss_scores: np.ndarray | None = None
+    unmixing_matrix: np.ndarray | None = None
+    bss_algorithm: str | None = None
+    on_scores: bool = False
+    params: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "events", _ResultEvents())
+
+
+@dataclass
+class ClusterResult:
+    """Container for clustering analysis output.
+
+    Attributes
+    ----------
+    cluster_labels : ndarray or None, shape (n_clusters, n_pixels)
+        Boolean matrix: row *c* has ``True`` for pixels in cluster *c*.
+    cluster_centroids : ndarray or None, shape (n_clusters, n_features)
+        Centroids in the (preprocessed) feature space.
+    cluster_distances : ndarray or None, shape (n_clusters, n_pixels)
+        Distance from each pixel to each cluster centroid.
+    cluster_sum_signals : ndarray or None
+        Sum signal for each cluster.
+    cluster_centroid_signals : ndarray or None
+        Signal of the pixel closest to each centroid.
+    number_of_clusters : int
+        Number of clusters found.
+    cluster_algorithm : str or None
+        Name of the clustering algorithm.
+    cluster_metric : str or None
+        Metric used for number-of-clusters estimation.
+    cluster_metric_index : ndarray or None
+        X-axis values for the metric plot (cluster counts).
+    cluster_metric_data : ndarray or None
+        Y-axis values for the metric plot (metric scores).
+    estimated_number_of_clusters : int or None
+        Optimal *k* estimate.
+    params : dict
+        Stage parameters for provenance.
+    """
+
+    cluster_labels: np.ndarray | None = None
+    cluster_centroids: np.ndarray | None = None
+    cluster_distances: np.ndarray | None = None
+    cluster_sum_signals: np.ndarray | None = None
+    cluster_centroid_signals: np.ndarray | None = None
+    number_of_clusters: int = 0
+    cluster_algorithm: str | None = None
+    cluster_metric: str | None = None
+    cluster_metric_index: np.ndarray | None = None
+    cluster_metric_data: np.ndarray | None = None
+    estimated_number_of_clusters: int | None = None
+    params: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "events", _ResultEvents())
+
+
 class _ResultEvents:
     """Minimal events namespace for result containers."""
 
