@@ -19,7 +19,6 @@ classifiers = [
 dependencies = [
     "array-api-compat>=1.9",
     "hyperspy>=2.4",
-    "hyperspy-ml-algorithms>=0.1",
     "matplotlib>=3.5",
     "scikit-learn>=1.6",
     "zarr>=2.16",
@@ -45,11 +44,15 @@ readme = "README.md"
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
+algorithms = [
+    "hyperspy-ml-algorithms @ git+https://github.com/hyperspy/hyperspy-ml-algorithms.git",
+]
 all = [
     "hyperspy-ml[dev]",
     "hyperspy-ml[dask]",
     "hyperspy-ml[gpu]",
     "hyperspy-ml[doc]",
+    "hyperspy-ml[algorithms]",
 ]
 coverage = [
     "pytest-cov",
