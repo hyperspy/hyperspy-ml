@@ -158,12 +158,11 @@ class LearningResults:
             np.savez(filename, **kwargs)
             _logger.info(f"Saved results to {filename}")
 
-    @classmethod
-    def load(cls, filename):
+    def load(self, filename):
         """Load results from a .npz file with backward-compatible key migration."""
-        instance = cls()
         decomposition = np.load(filename, allow_pickle=True)
-        _d = instance.__dict__
+        _d = self.__dict__
+        _d.clear()
         for key, value in decomposition.items():
             if value.dtype == np.dtype("object"):
                 value = None
@@ -198,7 +197,7 @@ class LearningResults:
             _d.pop(key, None)
 
         _logger.info(f"Loaded results from {filename}")
-        return instance
+        return self
 
     def summary(self):
         text = (
