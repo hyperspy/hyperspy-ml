@@ -22,8 +22,9 @@ import dask.array as da
 import numpy as np
 import pytest
 from hyperspy.exceptions import VisibleDeprecationWarning
-from hyperspy.learn._mva import _keenan_kotula_scale
 from hyperspy.signals import Signal1D
+
+from hyperspy_ml.utils.preprocessing import _keenan_kotula_scale
 
 sklearn = importlib.util.find_spec("sklearn")
 skip_sklearn = pytest.mark.skipif(sklearn is None, reason="sklearn not installed")
@@ -3234,3 +3235,346 @@ class TestLazyDecompositionBugfixes:
         # Each block should have signal_size columns
         for block in blocks:
             assert block.shape[1] == s.axes_manager.signal_size
+
+
+# ============================================================================
+# Decomposition stage (Task 4b): lazy path tests
+# ============================================================================
+# These tests verify Decomposition().fit_transform(lazy_signal) using the
+# new stage-based API, not the legacy Signal.decomposition() method.
+
+import sys as _sys2  # noqa: E402
+
+if "/tmp/hyperspy-ml-extract" not in _sys2.path:
+    _sys2.path.insert(0, "/tmp/hyperspy-ml-extract")
+
+
+def _make_lazy_signal(seed=42, nav_y=7, nav_x=11, sig=13, rank=3):
+    """Create a lazy Signal1D with ALL-DIFFERENT dimensions and known rank."""
+    rng = np.random.default_rng(seed)
+    nav_size = nav_y * nav_x
+    U = rng.standard_normal((nav_size, rank))
+    V = rng.standard_normal((sig, rank))
+    X = U @ V.T
+    X = X.reshape(nav_y, nav_x, sig)
+    return Signal1D(X).as_lazy(), nav_y, nav_x, sig
+
+
+class TestDecompositionStageLazy:
+    """Tests for Decomposition().fit_transform() on lazy (dask-backed) signals.
+
+    ALL-DIFFERENT dimensions (7, 11, 13) are used so axis reversals
+    are immediately visible.
+    """
+
+    def test_basic_svd_randomized(self):
+        """fit_transform with SVD/randomized on lazy signal returns correct
+        shapes."""
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="randomized",
+            output_dimension=3,
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+        assert result.components.shape == (sig, 3)
+        assert result.scores.shape == (n_y * n_x, 3)
+        assert result.explained_variance is not None
+        assert result.explained_variance.shape == (3,)
+        assert result.n_components == 3
+
+    def test_svd_full_returns_dask_arrays(self):
+        """svd_solver='full' returns dask-backed components and scores."""
+        import dask.array as da
+
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="full",
+            output_dimension=3,
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+        assert hasattr(result.components, "dask"), "components should be dask-backed"
+        assert hasattr(result.scores, "dask"), "scores should be dask-backed"
+        assert isinstance(result.components, da.Array)
+        assert isinstance(result.scores, da.Array)
+
+    def test_svd_full_reconstruction(self):
+        """Dask-backed components x scores reconstruct original data."""
+
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="full",
+            output_dimension=3,
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+        recon_da = result.scores @ result.components.T
+        recon = recon_da.compute()
+        orig_flat = s.data.compute().reshape(n_y * n_x, sig)
+        recon_error = np.linalg.norm(recon - orig_flat)
+        assert recon_error < 0.5 * np.linalg.norm(orig_flat)
+
+    def test_keenan_kotula_scaling_lazy(self):
+        """K-K Poisson-noise scaling works on lazy signals."""
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        rng = np.random.default_rng(7)
+        nav_s, sig_s = 15, 20
+        data = rng.integers(1, 100, size=(nav_s, sig_s)).astype(float)
+        s = Signal1D(data.copy()).as_lazy()
+
+        stage = Decomposition(
+            normalize_poissonian_noise=True,
+            algorithm="SVD",
+            svd_solver="randomized",
+            output_dimension=2,
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+        assert result.bH is not None
+        assert result.aG is not None
+        assert result.components.shape == (sig_s, 2)
+        assert result.scores.shape == (nav_s, 2)
+        assert np.all(np.isfinite(result.components))
+        assert np.all(np.isfinite(result.scores))
+
+    def test_signal_mask_lazy(self):
+        """Signal mask excludes channels, produces NaN at masked positions."""
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        sm = np.zeros(sig, dtype=bool)
+        sm[-3:] = True
+
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="randomized",
+            output_dimension=3,
+            signal_mask=sm,
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+        assert result.components.shape == (sig, 3)
+        assert np.all(np.isnan(result.components[-3:]))
+        assert np.all(np.isfinite(result.components[:-3]))
+
+    def test_navigation_mask_lazy(self):
+        """Navigation mask excludes pixels, produces NaN at masked positions."""
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        nav_s = n_y * n_x
+        nm = np.zeros(nav_s, dtype=bool)
+        nm[:5] = True
+
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="randomized",
+            output_dimension=3,
+            navigation_mask=nm,
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+        assert result.scores.shape == (nav_s, 3)
+        assert np.all(np.isnan(result.scores[:5]))
+        assert np.all(np.isfinite(result.scores[5:]))
+
+    def test_lazy_vs_eager_agreement(self):
+        """Lazy and eager SVD give near-identical explained variance."""
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        rng = np.random.default_rng(99)
+        rank = 3
+        nav, sig = 20, 30
+        U = rng.standard_normal((nav, rank))
+        V = rng.standard_normal((sig, rank))
+        data = U @ V.T
+
+        s_nl = Signal1D(data.copy())
+        s_lz = Signal1D(data.copy()).as_lazy()
+
+        stage = Decomposition(algorithm="SVD", output_dimension=3, print_info=False)
+        r_nl = stage.fit_transform(s_nl)
+        r_lz = stage.fit_transform(s_lz)
+
+        np.testing.assert_allclose(
+            r_nl.explained_variance, r_lz.explained_variance, rtol=1e-6
+        )
+
+    def test_explained_variance_ratio_sum(self):
+        """explained_variance_ratio sums to ~1 for lazy SVD."""
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="randomized",
+            output_dimension=3,
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+        np.testing.assert_allclose(
+            result.explained_variance_ratio.sum(), 1.0, rtol=1e-10
+        )
+
+    def test_reproject_navigation_lazy(self):
+        """reproject='navigation' fills all nav positions (no NaN)."""
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        nav_s = n_y * n_x
+        nm = np.zeros(nav_s, dtype=bool)
+        nm[:5] = True
+
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="randomized",
+            output_dimension=3,
+            navigation_mask=nm,
+            reproject="navigation",
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+        assert result.scores.shape == (nav_s, 3)
+        assert np.all(np.isfinite(result.scores))
+
+    def test_num_chunks_parameter_accepted(self):
+        """num_chunks parameter is stored and used without error."""
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="randomized",
+            output_dimension=3,
+            num_chunks=2,
+            print_info=False,
+        )
+        assert stage.num_chunks == 2
+        result = stage.fit_transform(s)
+        assert result.components.shape == (sig, 3)
+        assert result.scores.shape == (n_y * n_x, 3)
+
+    def test_params_dict_includes_lazy_fields(self):
+        """Result params include num_chunks and svd_solver."""
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="full",
+            output_dimension=3,
+            num_chunks=4,
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+        assert result.params["svd_solver"] == "full"
+        assert result.params["num_chunks"] == 4
+        assert result.params["algorithm"] == "SVD"
+
+    def test_lazy_reconstruction_via_dask_matmul(self):
+        """Dask-backed reconstruction does not call .compute() on raw data."""
+        import dask.array as da
+
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="full",
+            output_dimension=3,
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+
+        recon = result.scores @ result.components.T
+        assert isinstance(recon, da.Array), "reconstruction should be dask-backed"
+        recon_np = recon.compute()
+        assert recon_np.shape == (n_y * n_x, sig)
+        assert np.all(np.isfinite(recon_np))
+
+
+@skip_sklearn
+class TestDecompositionStageLazyIncremental:
+    """Tests for Decomposition().fit_transform() with svd_solver='incremental'
+    on lazy (dask-backed) signals."""
+
+    def test_basic_incremental_svd(self):
+        """Incremental SVD on lazy signal returns correct shapes."""
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="incremental",
+            output_dimension=3,
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+        assert result.components.shape == (sig, 3)
+        assert result.scores.shape == (n_y * n_x, 3)
+        assert result.n_components == 3
+
+    def test_incremental_reconstruction(self):
+        """Incremental SVD reconstructs original data within tolerance."""
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="incremental",
+            output_dimension=3,
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+        recon = result.scores @ result.components.T
+        orig_flat = s.data.compute().reshape(n_y * n_x, sig)
+        recon_error = np.linalg.norm(recon - orig_flat)
+        assert recon_error < 1e-10, f"RMS {recon_error:.2e} too large"
+
+    def test_incremental_with_mask(self):
+        """Incremental SVD with signal mask produces NaN at masked positions."""
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        sm = np.zeros(sig, dtype=bool)
+        sm[:3] = True
+
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="incremental",
+            output_dimension=3,
+            signal_mask=sm,
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+        assert result.components.shape == (sig, 3)
+        assert np.all(np.isnan(result.components[:3]))
+        assert np.all(np.isfinite(result.components[3:]))
+
+    def test_incremental_with_centre(self):
+        """Incremental SVD with centre='navigation' works on lazy signals."""
+        from hyperspy_ml.stages.decomposition import Decomposition
+
+        s, n_y, n_x, sig = _make_lazy_signal()
+        stage = Decomposition(
+            algorithm="SVD",
+            svd_solver="incremental",
+            output_dimension=3,
+            centre="navigation",
+            print_info=False,
+        )
+        result = stage.fit_transform(s)
+        assert result.mean is not None
+        assert result.components.shape == (sig, 3)
+        assert result.scores.shape == (n_y * n_x, 3)

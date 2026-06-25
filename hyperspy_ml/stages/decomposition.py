@@ -38,6 +38,7 @@ from __future__ import annotations
 import importlib
 import logging
 import warnings
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -141,6 +142,11 @@ class Decomposition:
         Print decomposition summary to stdout.
     svd_solver : {``"auto"``, ``"full"``, ``"arpack"``, ``"randomized"``}, default ``"auto"``
         SVD solver to use.  Only used for ``algorithm="SVD"``.
+    num_chunks : int or None, default None
+        Number of dask chunks to pass to the decomposition model at a time
+        (lazy signals only).  More chunks require more memory but should
+        run faster.  Not used for ``algorithm='SVD'`` with
+        ``svd_solver='randomized'``.
     copy : bool, default False
         **Deprecated.** Data modifications are reversed mathematically
         after decomposition, so explicit copying is no longer needed.
@@ -163,6 +169,7 @@ class Decomposition:
         return_info: bool = False,
         print_info: bool = True,
         svd_solver: str = "auto",
+        num_chunks: int | None = None,
         copy: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -179,6 +186,7 @@ class Decomposition:
         self.return_info = return_info
         self.print_info = print_info
         self.svd_solver = svd_solver
+        self.num_chunks = num_chunks
         self.copy = copy
         self._extra_kwargs = kwargs
 
@@ -309,6 +317,11 @@ class Decomposition:
     def _run(self) -> DecompositionResult:
         """Orchestrate the full decomposition pipeline."""
         signal = self._signal
+
+        # Branch: lazy signals use a dask-native pipeline.
+        if getattr(signal, "_lazy", False):
+            return self._run_lazy()
+
         algorithm = self.algorithm
         to_print_lines: list[str] = [
             "Decomposition info:",
@@ -721,8 +734,375 @@ class Decomposition:
             "auto_transpose": self.auto_transpose,
             "reproject": self.reproject,
             "svd_solver": self.svd_solver,
+            "num_chunks": self.num_chunks,
         }
         params.update(self._extra_kwargs)
         if self.return_info and estim is not None:
             params["estimator"] = estim
         return params
+
+    # ------------------------------------------------------------------
+    # Lazy (dask-backed) execution path
+    # ------------------------------------------------------------------
+
+    def _run_lazy(self) -> DecompositionResult:
+        """Run decomposition on a dask-backed (lazy) signal.
+
+        Uses dask-native operations throughout — no eager ``.compute()``
+        calls except where a small result is needed (e.g. centring mean,
+        explained variance).  The default SVD solver for lazy signals is
+        ``"randomized"``.
+
+        Returns
+        -------
+        DecompositionResult
+            Result whose components/scores are dask-backed when
+            ``svd_solver='full'`` is used, and numpy otherwise.
+        """
+        signal = self._signal
+        algorithm = self.algorithm
+
+        # Lazy path supports SVD (all solvers) and custom estimators.
+        # Non-SVD named algorithms (PCA, ORPCA, ORNMF, NMF) use partial_fit
+        # iteration which is NOT dask-native — for those, collect all data
+        # eagerly and dispatch through the eager path.
+        _effective_solver = self.svd_solver
+        if algorithm == "SVD" and _effective_solver == "auto":
+            # Default to randomized for lazy signals (matches original
+            # LazySignal.decomposition behaviour).
+            _effective_solver = "randomized"
+        _lazy_svd = algorithm == "SVD" and _effective_solver in (
+            "full",
+            "randomized",
+            "incremental",
+        )
+        _can_use_dask = _lazy_svd
+
+        to_print_lines: list[str] = [
+            "Decomposition info:",
+            f"  normalize_poissonian_noise={self.normalize_poissonian_noise}",
+            f"  algorithm={algorithm}",
+            f"  output_dimension={self.output_dimension}",
+            f"  centre={self.centre}",
+        ]
+
+        if not _can_use_dask:
+            # For algorithms that don't have a native dask path, collect
+            # all data eagerly and delegate to the eager pipeline.
+            _logger.info("Collecting lazy data for non-dask-native decomposition")
+            try:
+                signal.data = signal.data.compute()
+            except Exception:
+                pass
+            return self._run()
+
+        # -------------------------------------------------------------
+        # 1. Unfold multi-dimensional data into a 2-D matrix.
+        # -------------------------------------------------------------
+        self._original_shape = signal.data.shape
+        self._unfolded = signal.unfold()
+        try:
+            nav_size = signal.axes_manager.navigation_size
+            ndim = signal.axes_manager.navigation_dimension
+            sdim = signal.axes_manager.signal_dimension
+
+            data = signal.data  # (nav, sig) — dask
+
+            # ---------------------------------------------------------
+            # 2. Normalise masks to flat bool arrays.
+            # ---------------------------------------------------------
+            nm = navigation_mask = _to_flat_bool(self.navigation_mask)
+            sm = signal_mask = _to_flat_bool(self.signal_mask)
+
+            # ---------------------------------------------------------
+            # 3. Apply K-K scaling (dask-aware).
+            # ---------------------------------------------------------
+            mean: np.ndarray | None = None
+            sqrt_aG: np.ndarray | None = None
+            sqrt_bH: np.ndarray | None = None
+
+            if self.normalize_poissonian_noise:
+                from hyperspy_ml.utils.preprocessing import _keenan_kotula_scale
+
+                data, sqrt_aG, sqrt_bH = _keenan_kotula_scale(data, nm, sm, ndim, sdim)
+
+            # ---------------------------------------------------------
+            # 4. Rechunk if num_chunks is set.
+            # ---------------------------------------------------------
+            if self.num_chunks is not None and self.svd_solver != "randomized":
+                if self.num_chunks <= 0:
+                    raise ValueError(
+                        f"`num_chunks` must be positive, got {self.num_chunks!r}"
+                    )
+                # Rechunk navigation dimension to num_chunks blocks
+                data = data.rechunk({0: max(1, nav_size // self.num_chunks)})
+
+            # ---------------------------------------------------------
+            # 5. Run SVD via dask operations.
+            # ---------------------------------------------------------
+            if algorithm == "SVD" and _effective_solver in ("full", "randomized"):
+                from hyperspy_ml.stages._lazy_decomposition import _lazy_svd_matrix
+
+                svd_result = _lazy_svd_matrix(
+                    data,
+                    svd_solver=_effective_solver,
+                    centre=self.centre,
+                    output_dimension=self.output_dimension,
+                    navigation_mask=nm,
+                    signal_mask=sm,
+                )
+                scores = svd_result["scores"]
+                components = svd_result["components"]
+                explained_variance = svd_result["explained_variance"]
+                mean = svd_result["mean"]
+                nav_mask_1d = svd_result["nav_mask_1d"]
+                sig_mask_1d = svd_result["sig_mask_1d"]
+
+            elif algorithm == "SVD" and _effective_solver == "incremental":
+                # Incremental SVD: iterate over dask chunks, call partial_fit.
+                from hyperspy.external.progressbar import progressbar
+
+                # ISVD may live in hyperspy.learn.incremental_svd (monorepo)
+                # or hyperspy_ml_algorithms (standalone).
+                try:
+                    from hyperspy.learn.incremental_svd import ISVD
+                except ImportError:
+                    from hyperspy_ml_algorithms import IncrementalSVD as ISVD
+
+                from hyperspy_ml.stages._lazy_decomposition import (
+                    _iterate_dask_chunks,
+                )
+
+                obj = ISVD(n_components=self.output_dimension)
+                method = partial(obj.partial_fit)
+
+                if self.centre is not None:
+                    _D_flat = data
+                    if self.centre == "navigation":
+                        if nm is not None:
+                            mean = _D_flat[~nm, :].mean(axis=0, keepdims=True).compute()
+                        else:
+                            mean = _D_flat.mean(axis=0, keepdims=True).compute()
+                    else:  # signal
+                        mean = _D_flat.mean(axis=1, keepdims=True).compute()
+                    data = data - mean
+
+                ndim_val = signal.axes_manager.navigation_dimension
+                nav_indices = [range(len(c)) for c in data.chunks[:ndim_val]]
+                nblocks = int(np.prod([len(c) for c in nav_indices]))
+                import math
+
+                num_chunks = max(1, self.num_chunks or 1)
+                nblocks_needed = math.ceil(nblocks / num_chunks)
+
+                this_data = []
+                for chunk in progressbar(
+                    _iterate_dask_chunks(data, nav_indices),
+                    total=nblocks_needed,
+                    leave=True,
+                    desc="Learn",
+                ):
+                    this_data.append(chunk)
+                    if len(this_data) == num_chunks:
+                        thedata = np.concatenate(this_data, axis=0)
+                        method(thedata)
+                        this_data = []
+                if this_data:
+                    thedata = np.concatenate(this_data, axis=0)
+                    method(thedata)
+
+                S = obj.singular_values_
+                n_total = obj.n_samples_seen_
+                explained_variance = S**2 / n_total
+                components = obj.components_.T
+
+                # Project scores over all nav chunks
+                nav_indices_full = [range(len(c)) for c in data.chunks[:ndim_val]]
+                H = []
+                for chunk in progressbar(
+                    _iterate_dask_chunks(data, nav_indices_full),
+                    total=nblocks_needed,
+                    leave=True,
+                    desc="Project",
+                ):
+                    H.append(obj.transform(chunk))
+                scores = np.concatenate(H, axis=0)
+
+                sig_mask_1d = sm
+                nav_mask_1d = nm
+
+            # ---------------------------------------------------------
+            # 6. Compute explained-variance ratio.
+            # ---------------------------------------------------------
+            n_components = scores.shape[1] if scores is not None else 0
+            explained_variance_ratio: np.ndarray | None = None
+            if explained_variance is not None:
+                ev_sum = float(
+                    explained_variance.sum().compute()
+                    if hasattr(explained_variance, "compute")
+                    else explained_variance.sum()
+                )
+                if ev_sum > 0:
+                    explained_variance_ratio = (
+                        explained_variance / ev_sum
+                        if not hasattr(explained_variance, "compute")
+                        else explained_variance / ev_sum
+                    )
+                    if hasattr(explained_variance_ratio, "compute"):
+                        explained_variance_ratio = explained_variance_ratio.compute()
+
+            # ---------------------------------------------------------
+            # 7. Truncate to output_dimension if needed.
+            # ---------------------------------------------------------
+            if (
+                self.output_dimension is not None
+                and n_components > self.output_dimension
+            ):
+                factors_idx = slice(None), slice(None, self.output_dimension)
+                scores = scores[factors_idx]
+                components = components[factors_idx]
+                if explained_variance is not None:
+                    explained_variance = explained_variance[: self.output_dimension]
+                if explained_variance_ratio is not None:
+                    explained_variance_ratio = explained_variance_ratio[
+                        : self.output_dimension
+                    ]
+                n_components = self.output_dimension
+
+            # ---------------------------------------------------------
+            # 8. Mask conversion: None → slice(None).
+            # ---------------------------------------------------------
+            if navigation_mask is None:
+                navigation_mask = slice(None)
+            if signal_mask is None:
+                signal_mask = slice(None)
+
+            _nm_slice = (
+                navigation_mask
+                if isinstance(navigation_mask, slice)
+                else ~navigation_mask
+            )
+            _sm_slice = signal_mask if isinstance(signal_mask, slice) else ~signal_mask
+
+            # ---------------------------------------------------------
+            # 9. Pre-compute flat masks for NaN-expand.
+            # ---------------------------------------------------------
+            _flat_nav_mask = _to_flat_bool(
+                None if isinstance(navigation_mask, slice) else navigation_mask
+            )
+            _flat_sig_mask = _to_flat_bool(
+                None if isinstance(signal_mask, slice) else signal_mask
+            )
+
+            # ---------------------------------------------------------
+            # 10. Reproject navigation.
+            # ---------------------------------------------------------
+            from hyperspy_ml.stages._lazy_decomposition import (
+                _lazy_reproject_navigation,
+            )
+
+            scores, _nav_reprojected = _lazy_reproject_navigation(
+                self.reproject,
+                algorithm,
+                _effective_solver,
+                scores,
+                components,
+                mean,
+                self.centre,
+                data,
+                sig_mask_1d,
+            )
+
+            # ---------------------------------------------------------
+            # 11. Reproject signal.
+            # ---------------------------------------------------------
+            _signal_reprojected = False
+            if self.reproject in ("signal", "both"):
+                from hyperspy_ml.stages._lazy_decomposition import (
+                    _lazy_reproject_signal,
+                )
+
+                components = _lazy_reproject_signal(
+                    algorithm,
+                    _effective_solver,
+                    self.reproject,
+                    scores,
+                    components,
+                    mean,
+                    self.centre,
+                    data,
+                    nav_mask_1d,
+                    _flat_sig_mask,
+                    _flat_nav_mask,
+                )
+                _signal_reprojected = True
+
+            # ---------------------------------------------------------
+            # 12. Rescale after Keenan-Kotula normalization.
+            # ---------------------------------------------------------
+            if self.normalize_poissonian_noise and sqrt_bH is not None:
+                _bh = sqrt_bH.ravel()
+                if not isinstance(signal_mask, slice) and _flat_sig_mask is not None:
+                    _bh = _bh[~_flat_sig_mask]
+                components = components * _bh[:, np.newaxis]
+
+                _ag = sqrt_aG.ravel()
+                if (
+                    not isinstance(navigation_mask, slice)
+                    and _flat_nav_mask is not None
+                ):
+                    _ag = _ag[~_flat_nav_mask]
+                scores = scores * _ag[:, np.newaxis]
+
+            # ---------------------------------------------------------
+            # 13. NaN-expand masked positions.
+            # ---------------------------------------------------------
+            if not isinstance(signal_mask, slice):
+                if self.reproject not in ("both", "signal"):
+                    from hyperspy_ml.utils.preprocessing import _nan_expand_rows
+
+                    if components.shape[0] != data.shape[-1]:
+                        components = _nan_expand_rows(
+                            components, signal_mask, data.shape[-1]
+                        )
+                    else:
+                        # Already full size — NaN-fill masked positions.
+                        components[signal_mask, :] = np.nan
+
+            if not isinstance(navigation_mask, slice):
+                if self.reproject not in ("both", "navigation"):
+                    from hyperspy_ml.utils.preprocessing import _nan_expand_rows
+
+                    if scores.shape[0] != data.shape[0]:
+                        scores = _nan_expand_rows(
+                            scores, navigation_mask, data.shape[0]
+                        )
+                    else:
+                        # Already full size — NaN-fill masked positions.
+                        scores[navigation_mask, :] = np.nan
+
+        finally:
+            if self._unfolded:
+                signal.fold()
+                self._unfolded = False
+
+        # Print info
+        if self.print_info:
+            print("\n".join(to_print_lines))
+
+        # Build result — components/scores remain dask-backed for
+        # svd_solver='full', computed numpy for randomized/incremental.
+        result = DecompositionResult(
+            components=components,
+            scores=scores,
+            explained_variance=explained_variance,
+            explained_variance_ratio=explained_variance_ratio,
+            mean=mean,
+            bH=sqrt_bH,
+            aG=sqrt_aG,
+            n_components=n_components,
+            centre=self.centre,
+            algorithm=str(algorithm),
+            params=self._build_params_dict(),
+        )
+        return result
