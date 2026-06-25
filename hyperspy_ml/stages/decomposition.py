@@ -61,8 +61,11 @@ _SKLEARN_ALGORITHM_NAMES = frozenset(
     {"sklearn_pca", "NMF", "sparse_pca", "mini_batch_sparse_pca"}
 )
 
-# Algorithms whose full-path implementation is deferred to a later task.
-_DEFERRED_ALGORITHMS = frozenset({"MLPCA", "RPCA", "ORPCA", "ORNMF"})
+# Algorithms that support partial_fit (incremental / online).
+_INCREMENTAL_ALGORITHMS = frozenset({"ORPCA", "ORNMF"})
+
+# Algorithms that use non-sklearn batch estimators.
+_ALGO_MLPCA = "MLPCA"
 
 # ---------------------------------------------------------------------------
 # Scikit-learn algorithm factory
@@ -207,10 +210,16 @@ class Decomposition:
     def fit(self, signal) -> Decomposition:
         """Store the signal reference and validate input parameters.
 
+        Supports a single :class:`~hyperspy.api.signals.BaseSignal` or a
+        list of signals for multi-signal (streaming) fitting.  When a
+        list is given, the first signal is used for validation and the
+        stage is initialised; subsequent signals are processed via
+        :meth:`partial_fit`.
+
         Parameters
         ----------
-        signal : BaseSignal
-            The signal to decompose.  Must have ``navigation_size >= 2``
+        signal : BaseSignal or list[BaseSignal]
+            The signal(s) to decompose.  Must have ``navigation_size >= 2``
             and float-typed data.
 
         Returns
@@ -218,6 +227,9 @@ class Decomposition:
         Decomposition
             Self, for chaining.
         """
+        if isinstance(signal, (list, tuple)):
+            return self._fit_multi(signal)
+
         if self.copy:
             warnings.warn(
                 "The `copy` parameter is deprecated and will be removed "
@@ -229,6 +241,150 @@ class Decomposition:
         self._validate_inputs(signal)
         self._signal = signal
         return self
+
+    def _fit_multi(self, signals: list) -> Decomposition:
+        """Validate and fit to a list of signals, streaming via partial_fit.
+
+        Parameters
+        ----------
+        signals : list[BaseSignal]
+            Non-empty list of signals with compatible shapes.
+
+        Returns
+        -------
+        Decomposition
+            Self, for chaining.
+
+        Raises
+        ------
+        ValueError
+            If *signals* is empty or signals have incompatible shapes.
+        """
+        if not signals:
+            raise ValueError("`fit()` requires at least one signal")
+
+        self._validate_inputs(signals[0])
+        self._signal = signals[0]
+
+        if not self._supports_partial_fit():
+            raise NotImplementedError(
+                f"Multi-signal fit requires an incremental algorithm. "
+                f"algorithm={self.algorithm!r} does not support partial_fit. "
+                f"Supported: {sorted(_INCREMENTAL_ALGORITHMS)}."
+            )
+
+        # Validate that all signals have compatible shapes.
+        ref_nav = signals[0].axes_manager.navigation_size
+        ref_sig = signals[0].axes_manager.signal_size
+        ref_shape = (ref_nav, ref_sig)
+        for i, s in enumerate(signals[1:], start=2):
+            ns = s.axes_manager.navigation_size
+            ss = s.axes_manager.signal_size
+            if (ns, ss) != ref_shape:
+                raise ValueError(
+                    f"Signal {i} has shape (nav={ns}, sig={ss}) but signal 1 "
+                    f"has shape (nav={ref_nav}, sig={ref_sig}). "
+                    "All signals in multi-signal fit must have the same "
+                    "navigation and signal sizes."
+                )
+
+        # Create the incremental estimator from the first signal.
+        self._incremental_estimator = self._make_incremental_estimator()
+
+        for s in signals:
+            self.partial_fit(s)
+
+        return self
+
+    def partial_fit(self, signal) -> DecompositionResult | None:
+        """Feed a new signal to an incremental decomposer.
+
+        Only supported for algorithms that implement ``partial_fit``
+        (currently ``ORPCA`` and ``ORNMF``).  On the first call a fresh
+        estimator is created; subsequent calls stream data through
+        ``partial_fit``.
+
+        Parameters
+        ----------
+        signal : BaseSignal
+            Signal to stream into the incremental estimator.
+
+        Returns
+        -------
+        DecompositionResult or None
+            The updated decomposition result, or ``None`` on error.
+
+        Raises
+        ------
+        NotImplementedError
+            If *algorithm* does not support ``partial_fit``.
+        """
+        algorithm = self.algorithm
+
+        if not self._supports_partial_fit():
+            raise NotImplementedError(
+                f"partial_fit is not supported for algorithm={algorithm!r}. "
+                f"Supported: {sorted(_INCREMENTAL_ALGORITHMS)}."
+            )
+
+        # Create the estimator on first call.
+        if (
+            not hasattr(self, "_incremental_estimator")
+            or self._incremental_estimator is None
+        ):
+            self._incremental_estimator = self._make_incremental_estimator()
+            self._signal = signal
+            self._original_shape = signal.data.shape
+            self._unfolded = signal.unfold()
+        else:
+            # Ensure data is 2-D for partial_fit.
+            signal.unfold()
+            self._unfolded = True
+
+        try:
+            data = signal.data
+            if (
+                isinstance(data, np.ndarray)
+                and data.dtype.char not in np.typecodes["AllFloat"]
+            ):
+                raise TypeError("Data must be floating-point type for decomposition")
+
+            self._incremental_estimator.partial_fit(data)
+
+            # Build result from current estimator state.
+            result = self._build_incremental_result()
+            result.events.data_changed = True
+            return result
+
+        finally:
+            if self._unfolded:
+                signal.fold()
+                self._unfolded = False
+
+    def _supports_partial_fit(self) -> bool:
+        """Return ``True`` when *algorithm* supports incremental fitting."""
+        return self.algorithm in _INCREMENTAL_ALGORITHMS
+
+    def _build_incremental_result(self) -> DecompositionResult:
+        """Build a :class:`DecompositionResult` from the current incremental
+        estimator state."""
+        estim = self._incremental_estimator
+
+        components = estim.components_.T
+
+        return DecompositionResult(
+            components=components,
+            scores=None,
+            explained_variance=None,
+            explained_variance_ratio=None,
+            mean=None,
+            bH=None,
+            aG=None,
+            n_components=self.output_dimension or components.shape[1],
+            centre=self.centre,
+            algorithm=str(self.algorithm),
+            params=self._build_params_dict(estim),
+        )
 
     def fit_transform(self, signal) -> DecompositionResult:
         """Run decomposition on *signal* and return a result object.
@@ -550,17 +706,27 @@ class Decomposition:
                 raise ImportError(f"algorithm='{algorithm}' requires scikit-learn.")
             return self._dispatch_sklearn(data_, algorithm, to_print)
 
+        # --- Online / robust algorithms (from hyperspy_ml_algorithms) ---
+        if algorithm == "ORPCA":
+            return self._dispatch_orpca(data_, to_print)
+
+        if algorithm == "ORNMF":
+            return self._dispatch_ornmf(data_, to_print)
+
+        if algorithm == _ALGO_MLPCA:
+            return self._dispatch_mlpca(data_, to_print)
+
         # --- Custom estimator ---
         if self._is_custom_estimator():
             return self._dispatch_custom(data_, algorithm, to_print)
 
-        # --- Deferred paths ---
-        if algorithm in _DEFERRED_ALGORITHMS:
+        # --- Deferred paths (RPCA only remaining) ---
+        if algorithm == "RPCA":
             raise NotImplementedError(
-                f"algorithm='{algorithm}' is deferred to Task 4c. "
-                "Only SVD, sklearn_pca, NMF, sparse_pca, "
-                "mini_batch_sparse_pca, and custom estimators are "
-                "supported in this release."
+                "algorithm='RPCA' is deferred. "
+                "ORPCA, ORNMF, and MLPCA are now supported "
+                "alongside SVD, sklearn_pca, NMF, sparse_pca, "
+                "mini_batch_sparse_pca, and custom estimators."
             )
 
         raise ValueError(
@@ -667,6 +833,121 @@ class Decomposition:
         factors = estim_.components_.T
         explained_variance = getattr(estim_, "explained_variance_", None)
         return factors, loadings, explained_variance, estim
+
+    # ------------------------------------------------------------------
+    # Online / robust algorithm dispatch (ORPCA, ORNMF, MLPCA)
+    # ------------------------------------------------------------------
+
+    def _dispatch_orpca(
+        self, data_: np.ndarray, to_print: list[str]
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, Any]:
+        """Run online robust PCA via :class:`hyperspy_ml_algorithms.ORPCA`."""
+        from hyperspy_ml_algorithms import ORPCA
+
+        estim = ORPCA(n_components=self.output_dimension, **self._extra_kwargs)
+        loadings = estim.fit_transform(data_)
+        # sklearn convention: components_ is (k, sig) → transpose to (sig, k)
+        factors = estim.components_.T
+        to_print.extend(["ORPCA estimator:", repr(estim)])
+        return factors.astype(float), loadings.astype(float), None, estim
+
+    def _dispatch_ornmf(
+        self, data_: np.ndarray, to_print: list[str]
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, Any]:
+        """Run online robust NMF via :class:`hyperspy_ml_algorithms.ORNMF`."""
+        from hyperspy_ml_algorithms import ORNMF
+
+        estim = ORNMF(n_components=self.output_dimension, **self._extra_kwargs)
+        loadings = estim.fit_transform(data_)
+        # sklearn convention: components_ is (k, sig) → transpose to (sig, k)
+        factors = estim.components_.T
+        to_print.extend(["ORNMF estimator:", repr(estim)])
+        return factors.astype(float), loadings.astype(float), None, estim
+
+    def _dispatch_mlpca(
+        self, data_: np.ndarray, to_print: list[str]
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, Any]:
+        """Run maximum-likelihood PCA via :class:`hyperspy_ml_algorithms.MLPCA`.
+
+        Handles variance input: ``var_array`` (direct), ``var_func``
+        (callable or polynomial coefficients), or Poisson-assumed default.
+        """
+        from hyperspy_ml_algorithms import MLPCA
+
+        var_array = self.var_array
+        var_func = self.var_func
+
+        if var_array is not None and var_func is not None:
+            raise ValueError(
+                "`var_func` and `var_array` cannot both be defined. "
+                "Please define just one of them."
+            )
+        elif var_array is None and var_func is None:
+            _logger.info(
+                "No variance array provided. Assuming Poisson-distributed data"
+            )
+            var_array = data_
+        elif var_array is not None:
+            if var_array.shape != data_.shape:
+                raise ValueError("`var_array` must have the same shape as input data")
+        elif var_func is not None:
+            if callable(var_func):
+                var_array = var_func(data_)
+            elif isinstance(var_func, (np.ndarray, list)):
+                var_array = np.polyval(var_func, data_)
+            else:
+                raise ValueError(
+                    "`var_func` must be either a function or an array "
+                    "defining the coefficients of a polynomial"
+                )
+
+        estim = MLPCA(
+            n_components=self.output_dimension,
+            **self._extra_kwargs,
+        )
+        loadings = estim.fit_transform(data_, var_array)
+        # MLPCA uses HyperSpy convention: components_ is (sig, k)
+        factors = estim.components_
+        explained_variance: np.ndarray | None = None
+        if hasattr(estim, "singular_values_"):
+            S = estim.singular_values_
+            explained_variance = S**2 / factors.shape[0]
+
+        to_print.extend(["MLPCA estimator:", repr(estim)])
+        return factors.astype(float), loadings.astype(float), explained_variance, estim
+
+    # ------------------------------------------------------------------
+    # Incremental (partial_fit) support
+    # ------------------------------------------------------------------
+
+    def _make_incremental_estimator(self):
+        """Create and return an unfitted estimator for *self.algorithm*.
+
+        Returns an estimator that supports ``partial_fit``, or raises
+        ``NotImplementedError`` when the algorithm does not support
+        incremental fitting.
+
+        Returns
+        -------
+        estimator
+        """
+        algorithm = self.algorithm
+        extra = self._extra_kwargs
+
+        if algorithm == "ORPCA":
+            from hyperspy_ml_algorithms import ORPCA
+
+            return ORPCA(n_components=self.output_dimension, **extra)
+
+        if algorithm == "ORNMF":
+            from hyperspy_ml_algorithms import ORNMF
+
+            return ORNMF(n_components=self.output_dimension, **extra)
+
+        raise NotImplementedError(
+            f"partial_fit is not supported for algorithm={algorithm!r}. "
+            f"Supported: {sorted(_INCREMENTAL_ALGORITHMS)}."
+        )
 
     # ------------------------------------------------------------------
     # Helpers

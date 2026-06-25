@@ -83,3 +83,17 @@ class DecompositionResult:
     centre: str | None = None
     algorithm: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Initialise the events namespace."""
+        object.__setattr__(self, "events", _ResultEvents())
+
+    def _notify_data_changed(self) -> None:
+        """Fire :attr:`events.data_changed`."""
+        self.events.data_changed = True
+
+
+class _ResultEvents:
+    """Minimal events namespace for result containers."""
+
+    data_changed: bool = False

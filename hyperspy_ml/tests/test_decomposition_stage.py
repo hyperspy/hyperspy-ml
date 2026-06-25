@@ -121,12 +121,11 @@ class TestValidation:
             stage.fit(s)
 
     def test_deferred_algorithms_raise(self):
-        """MLPCA, RPCA, ORPCA, ORNMF are deferred."""
+        """RPCA is deferred."""
         s = _make_low_rank_signal()
-        for algo in ["MLPCA", "RPCA", "ORPCA", "ORNMF"]:
-            stage = Decomposition(algorithm=algo, output_dimension=3, print_info=False)
-            with pytest.raises(NotImplementedError, match="deferred"):
-                stage.fit_transform(s)
+        stage = Decomposition(algorithm="RPCA", output_dimension=3, print_info=False)
+        with pytest.raises(NotImplementedError, match="RPCA"):
+            stage.fit_transform(s)
 
     def test_unknown_algorithm_raises(self):
         """Unknown string algorithms raise ValueError."""
