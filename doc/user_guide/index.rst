@@ -26,12 +26,35 @@ analysis (ICA), are available through the methods described in this section.
    as :class:`~.model.components1D.Gaussian`, :class:`~.model.components1D.Lorentzian`
    used in model fitting).
 
-.. versionchanged:: 2.5.0
-   The terms ``factors`` and ``loadings`` have been renamed to
-   ``components`` and ``scores`` respectively across the decomposition
-   API. The old method names (e.g. ``get_decomposition_factors()``,
-   ``plot_decomposition_loadings()``) still work but emit deprecation
-   warnings and will be removed in HyperSpy 3.0.
+Installation
+------------
+
+To install hyperspy-ml, use pip:
+
+.. code-block:: bash
+
+   pip install hyperspy-ml
+
+Quick Start
+-----------
+
+.. code-block:: python
+
+   import hyperspy.api as hs
+   from hyperspy_ml import decompose
+
+   # Load data
+   s = hs.load("my_data.hspy")
+
+   # Run decomposition
+   result = decompose(s, algorithm="SVD", output_dimension=3)
+
+   # Plot results
+   result.plot_components()
+   result.plot_scores()
+
+   # Save results
+   result.save("results.hsml")
 
 .. toctree::
     :maxdepth: 2
@@ -41,3 +64,4 @@ analysis (ICA), are available through the methods described in this section.
     clustering.rst
     visualize_results.rst
     export_results.rst
+    migration.rst

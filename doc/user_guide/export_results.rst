@@ -3,66 +3,71 @@
 Export results
 ==============
 
-Obtain the results as BaseSignal instances
-------------------------------------------
+Obtain the results as arrays
+----------------------------
 
-The decomposition and BSS results are internally stored as numpy arrays in the
-:class:`~.api.signals.BaseSignal` class. Frequently it is useful to obtain the
-decomposition/BSS components and scores as HyperSpy signals, and HyperSpy
-provides the following methods for that purpose:
+The decomposition and BSS results are stored as numpy arrays in the result objects.
+You can obtain them using the following methods:
 
-* :meth:`~.api.signals.BaseSignal.get_decomposition_scores`
-* :meth:`~.api.signals.BaseSignal.get_decomposition_components`
-* :meth:`~.api.signals.BaseSignal.get_bss_scores`
-* :meth:`~.api.signals.BaseSignal.get_bss_components`
+* :meth:`~hyperspy_ml.results.base.DecompositionResult.get_decomposition_scores`
+* :meth:`~hyperspy_ml.results.base.DecompositionResult.get_decomposition_components`
+* :meth:`~hyperspy_ml.results.base.DecompositionResult.get_bss_scores`
+* :meth:`~hyperspy_ml.results.base.DecompositionResult.get_bss_components`
 
 .. _mva.saving-label:
 
 Save and load results
 ---------------------
 
-Save in the main file
-~~~~~~~~~~~~~~~~~~~~~
+hyperspy-ml introduces a new Zarr-based format (``.hsml``) for saving and loading
+machine learning results independently of the signal data.
 
-If you save the dataset on which you've performed machine learning analysis in
-the :external+rsciio:ref:`HSpy-HDF5 <hspy-format>` format (the default in HyperSpy, see
-:ref:`saving_files`), the result of the analysis is also saved in the same
-file automatically, and it is loaded along with the rest of the data when you
-next open the file.
+Save to a .hsml file
+~~~~~~~~~~~~~~~~~~~~
 
-.. note::
-   This approach currently supports storing one decomposition and one BSS
-   result, which may not be enough for your purposes.
-
-Save to an external file
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-Alternatively, you can save the results of the current machine learning
-analysis to a separate file with the
-:meth:`~.learn.LearningResults.save` method:
+You can save any result object (Decomposition, BSS, or Clustering) to a ``.hsml``
+file using the :meth:`~hyperspy_ml.results.base.DecompositionResult.save` method:
 
 .. code-block:: python
 
    >>> # Save the result of the analysis
-   >>> s.learning_results.save('my_results.npz') # doctest: +SKIP
+   >>> result.save('my_results.hsml') # doctest: +SKIP
 
-   >>> # Load back the results
-   >>> s.learning_results.load('my_results.npz') # doctest: +SKIP
+Load from a .hsml file
+~~~~~~~~~~~~~~~~~~~~~~
+
+To load a result back, use the :func:`~hyperspy_ml.load_result` function:
+
+.. code-block:: python
+
+   >>> from hyperspy_ml import load_result
+   >>> result = load_result('my_results.hsml') # doctest: +SKIP
+
+Extract results from legacy files
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you have old HyperSpy files (``.hspy``) that contain machine learning results
+in the legacy ``learning_results`` attribute, or legacy ``.npz`` result files,
+you can extract them into the new result objects using :func:`~hyperspy_ml.extract_results`:
+
+.. code-block:: python
+
+   >>> from hyperspy_ml import extract_results
+   >>> # Extract from a signal loaded from a .hspy file
+   >>> s = hs.load("legacy_file.hspy")
+   >>> result = extract_results(s)
+
+   >>> # Extract directly from a legacy .npz file
+   >>> result = extract_results("legacy_results.npz")
 
 Export in different formats
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-You can also export the results of a machine learning analysis to any format
-supported by RosettaSciIO with the following methods:
+You can still export the results to any format supported by RosettaSciIO by
+first converting the result arrays to HyperSpy signals:
 
-* :meth:`~.api.signals.BaseSignal.export_decomposition_results`
-* :meth:`~.api.signals.BaseSignal.export_bss_results`
+.. code-block:: python
 
-These methods accept many arguments to customise the way in which the
-data is exported, so please consult the method documentation. The options
-include the choice of file format, the prefixes for scores and components,
-saving figures instead of data and more.
-
-.. warning::
-   Data exported in this way cannot be easily loaded into HyperSpy's
-   machine learning structure.
+   >>> # Example: export components to a TIFF file
+   >>> components_signal = hs.signals.Signal1D(result.components)
+   >>> components_signal.save("components.tif") # doctest: +SKIP

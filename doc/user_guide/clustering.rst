@@ -58,23 +58,20 @@ derive three main values:
    centroid respectively.
 
 
-Clustering functions HyperSpy
------------------------------
+Clustering functions
+--------------------
 
-All HyperSpy signals have the following methods for clustering analysis:
+The hyperspy-ml package provides the following functions and methods for clustering analysis:
 
-* :meth:`~.api.signals.BaseSignal.cluster_analysis`
-* :meth:`~.api.signals.BaseSignal.plot_cluster_results`
-* :meth:`~.api.signals.BaseSignal.plot_cluster_labels`
-* :meth:`~.api.signals.BaseSignal.plot_cluster_signals`
-* :meth:`~.api.signals.BaseSignal.plot_cluster_distances`
-* :meth:`~.api.signals.BaseSignal.get_cluster_signals`
-* :meth:`~.api.signals.BaseSignal.get_cluster_labels`
-* :meth:`~.api.signals.BaseSignal.get_cluster_distances`
-* :meth:`~.api.signals.BaseSignal.estimate_number_of_clusters`
-* :meth:`~.api.signals.BaseSignal.plot_cluster_metric`
+* :func:`~hyperspy_ml.cluster`
+* :meth:`~hyperspy_ml.results.base.ClusterResult.plot_cluster_signals`
+* :meth:`~hyperspy_ml.results.base.ClusterResult.plot_cluster_labels`
+* :meth:`~hyperspy_ml.results.base.ClusterResult.plot_cluster_distances`
+* :meth:`~hyperspy_ml.results.base.ClusterResult.get_cluster_signals`
+* :meth:`~hyperspy_ml.results.base.ClusterResult.get_cluster_labels`
+* :meth:`~hyperspy_ml.results.base.ClusterResult.get_cluster_distances`
 
-The :meth:`~.api.signals.BaseSignal.cluster_analysis` method can perform cluster
+The :func:`~hyperspy_ml.cluster` function can perform cluster
 analysis using any :external+sklearn:ref:`scikit-learn clustering <clustering>`
 algorithms or any other object with a compatible API. This involves importing
 the relevant algorithm class from scikit-learn.
@@ -82,8 +79,9 @@ the relevant algorithm class from scikit-learn.
 .. code-block:: python
 
     >>> from sklearn.cluster import KMeans # doctest: +SKIP
-    >>> s.cluster_analysis(
-    ...    cluster_source="signal", algorithm=KMeans(n_clusters=3, n_init=8)
+    >>> from hyperspy_ml import cluster
+    >>> cluster_result = cluster(
+    ...    result, cluster_source="decomposition", algorithm=KMeans(n_clusters=3, n_init=8)
     ...    ) # doctest: +SKIP
 
 
@@ -95,13 +93,11 @@ For example:
 
 .. code-block:: python
 
-    >>> s.cluster_analysis(
-    ...    cluster_source="signal", n_clusters=3, preprocessing="norm", algorithm="kmeans", n_init=8
+    >>> cluster_result = cluster(
+    ...    result, cluster_source="decomposition", n_clusters=3, preprocessing="norm", algorithm="kmeans", n_init=8
     ...    ) # doctest: +SKIP
 
-is equivalent to:
-
-:meth:`~.api.signals.BaseSignal.cluster_analysis` computes the cluster labels. The
+:func:`~hyperspy_ml.cluster` computes the cluster labels. The
 clusters areas with identical label are averaged to create a set of cluster
 centres. This averaging can be performed on the ``signal`` itself, the
 :ref:`BSS <mva.blind_source_separation>` or :ref:`decomposition <mva.decomposition>` results
@@ -129,8 +125,9 @@ under investigation.
 
 All pre-processing methods from (or compatible with) the
 :external+sklearn:ref:`scikit-learn pre-processing <preprocessing>` module can be passed
-to the ``scaling`` keyword of the :meth:`~.api.signals.BaseSignal.cluster_analysis`
-method. For convenience, the following methods from scikit-learn are
+to the ``scaling`` keyword of the :func:`~hyperspy_ml.cluster`
+function.
+ For convenience, the following methods from scikit-learn are
 available as standard: ``standard`` , ``minmax`` and ``norm`` as
 standard. Briefly, ``norm`` treats the features as a vector and normalizes the
 vector length. ``standard`` re-scales each feature by removing the mean and
@@ -155,14 +152,14 @@ above using the ``signal`` keyword argument:
 
 .. code-block:: python
 
-    >>> s.plot_cluster_labels(signal="centroid") # doctest: +SKIP
+    >>> cluster_result.plot_cluster_labels(signal="centroid") # doctest: +SKIP
 
 In addition, it is possible to plot the mean signal over the different
 clusters:
 
 .. code-block:: python
 
-    >>> s.plot_cluster_labels(signal="mean") # doctest: +SKIP
+    >>> cluster_result.plot_cluster_labels(signal="mean") # doctest: +SKIP
 
 
 Clustering with user defined algorithms
@@ -188,13 +185,13 @@ the data then applies a square root to enhances weaker features.
     ...         scaled_data = scaled_data ** self.power
     ...         return scaled_data
 
-The PowerScaling class can then be passed to the cluster_analysis method for use.
+The PowerScaling class can then be passed to the cluster function for use.
 
 .. code-block:: python
 
     >>> ps = PowerScaling() # doctest: +SKIP
-    >>> s.cluster_analysis(
-    ...    cluster_source="decomposition", number_of_components=3, preprocessing=ps
+    >>> cluster_result = cluster(
+    ...    result, cluster_source="decomposition", number_of_components=3, preprocessing=ps
     ...    ) # doctest: +SKIP
 
 For user defined clustering algorithms the class must implementation

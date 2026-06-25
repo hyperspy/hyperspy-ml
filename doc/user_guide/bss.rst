@@ -14,7 +14,7 @@ example application to EELS analysis, see :ref:`[Pena2010] <Pena2010>`.
    The BSS algorithms operate on the result of a previous
    decomposition analysis. It is therefore necessary to perform a
    :ref:`decomposition <mva.decomposition>` first before calling
-   :meth:`~.api.signals.BaseSignal.blind_source_separation`, otherwise it
+   :func:`~hyperspy_ml.bss`, otherwise it
    will raise an error.
 
    You must provide an integer ``number_of_components`` argument,
@@ -23,19 +23,20 @@ example application to EELS analysis, see :ref:`[Pena2010] <Pena2010>`.
    decomposition.
 
 To perform blind source separation on the result of a previous decomposition,
-run the :meth:`~.api.signals.BaseSignal.blind_source_separation` method, for example:
+use the :func:`~hyperspy_ml.bss` function, for example:
 
 .. code-block:: python
 
+   >>> from hyperspy_ml import decompose, bss
    >>> s = hs.signals.Signal1D(np.random.randn(10, 10, 200))
-   >>> s.decomposition(output_dimension=3)
+   >>> result = decompose(s, output_dimension=3)
     Decomposition info:
       normalize_poissonian_noise=False
       algorithm=SVD
       output_dimension=3
       centre=None
 
-   >>> s.blind_source_separation(number_of_components=3)
+   >>> bss_result = bss(result, number_of_components=3)
     Blind source separation info:
       number_of_components=3
       algorithm=sklearn_fastica
@@ -46,7 +47,7 @@ run the :meth:`~.api.signals.BaseSignal.blind_source_separation` method, for exa
     FastICA(tol=1e-10, whiten=False)
 
    # Perform only on the first and third components
-   >>> s.blind_source_separation(comp_list=[0, 2])
+   >>> bss_result = bss(result, comp_list=[0, 2])
     Blind source separation info:
       number_of_components=2
       algorithm=sklearn_fastica
@@ -56,19 +57,22 @@ run the :meth:`~.api.signals.BaseSignal.blind_source_separation` method, for exa
     scikit-learn estimator:
     FastICA(tol=1e-10, whiten=False)
 
-To reconstruct a model from the separated components, run the
-:meth:`~.api.signals.BaseSignal.get_bss_model` method:
+To reconstruct a model from the separated components, use the
+:meth:`~hyperspy_ml.results.base.DecompositionResult.get_bss_model` method on the decomposition result.
+Note that you may need to assign the BSS results back to the decomposition result object first:
 
 .. code-block:: python
 
+   >>> result.bss_components = bss_result.bss_components
+   >>> result.bss_scores = bss_result.bss_scores
    >>> # Use all BSS components to reconstruct the model
-   >>> sc = s.get_bss_model() # doctest: +SKIP
+   >>> sc = result.get_bss_model() # doctest: +SKIP
 
    >>> # Use components [0, 2] to reconstruct the model
-   >>> sc = s.get_bss_model([0, 2]) # doctest: +SKIP
+   >>> sc = result.get_bss_model([0, 2]) # doctest: +SKIP
 
-As with :meth:`~.api.signals.BaseSignal.get_decomposition_model`,
-``get_bss_model()`` accepts a ``lazy`` keyword to control whether the returned
+As with :meth:`~hyperspy_ml.results.base.DecompositionResult.get_decomposition_model`,
+``get_bss_model()`` accepts a ``lazy_output`` keyword to control whether the returned
 model is eager or lazy; see :ref:`mva.model_output_laziness`.
 
 
@@ -121,10 +125,11 @@ often "simpler" to interpret than just PCA, since each componenthas a more discr
 
 .. code-block:: python
 
+   >>> from hyperspy_ml import decompose, bss
    >>> s = hs.signals.Signal1D(np.random.randn(10, 10, 200))
-   >>> s.decomposition(output_dimension=3, print_info=False)
+   >>> result = decompose(s, output_dimension=3, print_info=False)
 
-   >>> s.blind_source_separation(number_of_components=3, algorithm="orthomax")
+   >>> bss_result = bss(result, number_of_components=3, algorithm="orthomax")
     Blind source separation info:
       number_of_components=3
       algorithm=orthomax
@@ -162,7 +167,4 @@ You can access the fitted estimator by passing ``return_info=True``.
    >>> from sklearn.decomposition import FastICA
 
    >>> pipe = Pipeline([("scaler", MinMaxScaler()), ("ica", FastICA())])
-   >>> out = s.blind_source_separation(number_of_components=3, algorithm=pipe, return_info=True, print_info=False)
-
-   >>> out
-   Pipeline(steps=[('scaler', MinMaxScaler()), ('ica', FastICA())])
+   >>> bss_result = bss(result, number_of_components=3, algorithm=pipe, print_info=False)
