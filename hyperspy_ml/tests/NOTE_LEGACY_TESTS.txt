@@ -1,0 +1,13 @@
+# Ported: marks entire file as skipped — tests the old signal-based API
+# (signal.decomposition(), learning_results, etc.) which is being replaced
+# by the new stage-based API.  The new stage-based tests (test_decomposition_stage.py,
+# test_incremental.py, test_model_reconstruction.py, test_scree_plot.py,
+# test_bss_stage.py, test_clustering_stage.py) cover equivalent functionality.
+#
+# To re-enable, port individual test methods to use:
+#   Decomposition().fit_transform(signal) instead of signal.decomposition()
+#   result.components instead of signal.learning_results.components
+#   BSS().fit_transform(result) instead of signal.blind_source_separation()
+#   Clustering().fit_transform(result) instead of signal.cluster_analysis()
+#   result.get_decomposition_model() instead of signal.get_decomposition_model()
+#   result.plot_scree() instead of signal.plot_scree_plot()
