@@ -95,7 +95,7 @@ Source = "https://github.com/hyperspy/hyperspy-ml"
 precision = 2
 
 [tool.coverage.run]
-branch = true
+branch = false
 omit = [
     "hyperspy_ml/tests/*",
     "hyperspy_ml/_mva.py",
