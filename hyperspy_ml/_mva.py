@@ -36,6 +36,22 @@ from hyperspy.external.progressbar import progressbar
 from hyperspy.misc import utils
 from rsciio.utils import path
 
+from hyperspy_ml.utils.preprocessing import (
+    _get_derivative,
+    _get_sklearn_algorithms,
+    _get_sklearn_clustering_algorithms,
+    _get_sklearn_preprocessing_algorithms,
+    _keenan_kotula_scale,
+    _nan_expand_rows,
+    _normalize_components,
+    _reproject_navigation_scores,
+    _reproject_signal_components,
+    _to_flat_bool,
+    cluster_algorithms,
+    estimate_elbow_position,
+    preprocessing_algorithms,
+)
+
 MDP_INSTALLED = importlib.util.find_spec("mdp") is not None
 SKLEARN_INSTALLED = importlib.util.find_spec("sklearn") is not None
 
@@ -52,346 +68,6 @@ CHUNKS_ARGS = """chunks : str, int, or tuple, default "auto"
             dimension chunking and the second controls navigation
             chunking (passed as ``nav_chunks`` to
             :meth:`~.api.signals.LazySignal.rechunk`)."""
-
-
-decomposition_algorithms = {
-    "sklearn_pca": "PCA",
-    "NMF": "NMF",
-    "sparse_pca": "SparsePCA",
-    "mini_batch_sparse_pca": "MiniBatchSparsePCA",
-    "sklearn_fastica": "FastICA",
-}
-
-
-cluster_algorithms = {
-    None: "KMeans",
-    "kmeans": "KMeans",
-    "agglomerative": "AgglomerativeClustering",
-    "minibatchkmeans": "MiniBatchKMeans",
-    "spectralclustering": "SpectralClustering",
-}
-
-
-preprocessing_algorithms = {
-    None: None,
-    "norm": "Normalizer",
-    "standard": "StandardScaler",
-    "minmax": "MinMaxScaler",
-}
-
-
-def _get_sklearn_algorithms(algorithm):
-    """Get the sklearn algorithms available for decomposition."""
-
-    module = importlib.import_module("sklearn.decomposition")
-    return getattr(module, decomposition_algorithms[algorithm])
-
-
-def _get_sklearn_clustering_algorithms(algorithm):
-    """Get the sklearn algorithms available for preprocessing."""
-
-    module = importlib.import_module("sklearn.cluster")
-    return getattr(module, cluster_algorithms[algorithm])
-
-
-def _get_sklearn_preprocessing_algorithms(algorithm):
-    """Get the sklearn algorithms available for preprocessing."""
-
-    module = importlib.import_module("sklearn.preprocessing")
-    return getattr(module, preprocessing_algorithms[algorithm])
-
-
-def _get_derivative(signal, diff_axes, diff_order):
-    """Calculate the derivative of a signal."""
-    if signal.axes_manager.signal_dimension == 1:
-        signal = signal.derivative(order=diff_order, axis=-1)
-    else:
-        # n-d signal case.
-        # Compute the differences for each signal axis, unfold the
-        # signal axes and stack the differences over the signal
-        # axis.
-        if diff_axes is None:
-            diff_axes = signal.axes_manager.signal_axes
-            iaxes = [axis.index_in_axes_manager for axis in diff_axes]
-        else:
-            iaxes = diff_axes
-        diffs = [signal.derivative(order=diff_order, axis=i) for i in iaxes]
-        for signal in diffs:
-            signal.unfold()
-        signal = utils.stack(diffs, axis=-1)
-        del diffs
-    return signal
-
-
-def _nan_expand_rows(arr, mask, total_rows):
-    """Return *arr* expanded to *total_rows*, NaN at positions where *mask* is True.
-
-    Works for both numpy and dask arrays.  ``mask`` is a flat boolean array of
-    length ``total_rows``; rows where mask is True are NaN-filled and rows where
-    mask is False are filled from ``arr`` in order.
-
-    Parameters
-    ----------
-    arr : numpy.ndarray or dask.array.Array, shape (n_kept, n_components)
-        The unmasked rows of the factor or loading matrix.
-    mask : numpy.ndarray of bool, shape (total_rows,)
-        True where the row was *excluded* from decomposition.
-    total_rows : int
-        Total number of rows in the expanded output (masked + unmasked).
-
-    Returns
-    -------
-    numpy.ndarray or dask.array.Array, shape (total_rows, n_components)
-    """
-    try:
-        import dask.array as _da
-    except ImportError:
-        _da = None
-
-    unmasked_idx = np.where(~mask)[0]
-    n_comp = arr.shape[1]
-
-    if _da is not None and isinstance(arr, _da.Array):
-        # Vectorized reindex via da.take() — avoids building one dask
-        # task per row, which creates an enormous task graph and can
-        # crash for large total_rows (e.g. millions of navigation pixels).
-        row_idx = np.full(total_rows, -1, dtype=np.intp)
-        row_idx[unmasked_idx] = np.arange(len(unmasked_idx), dtype=np.intp)
-        # Pad arr with a NaN row so masked positions (index -1) map to NaN.
-        nan_row_np = np.full((1, n_comp), np.nan, dtype=arr.dtype)
-        arr_padded = _da.concatenate(
-            [_da.from_array(nan_row_np, chunks=(1, n_comp)), arr], axis=0
-        )
-        # Shift indices: -1 → 0 (NaN row), 0 → 1, …
-        take_idx = _da.from_array(row_idx + 1, chunks=(arr.chunks[0][0],))
-        return _da.take(arr_padded, take_idx, axis=0)
-    else:
-        out = np.full((total_rows, n_comp), np.nan, dtype=arr.dtype)
-        out[unmasked_idx, :] = arr
-        return out
-
-
-def _normalize_components(target, other, function=np.sum):
-    """Normalize components according to a function."""
-    coeff = function(target, axis=0)
-    target /= coeff
-    other *= coeff
-
-
-def _to_flat_bool(mask):
-    """Return a flat boolean numpy array, ``True`` where *mask* is ``True``.
-
-    Normalises mask inputs of various types (BaseSignal, dask array, numpy
-    array, or ``None``) into a 1-D boolean numpy array suitable for
-    boolean indexing and :func:`_nan_expand_rows`.
-
-    Parameters
-    ----------
-    mask : BaseSignal, dask.array.Array, numpy.ndarray, or None
-        The mask to normalise.  If ``None``, returns ``None``.
-
-    Returns
-    -------
-    numpy.ndarray or None
-        Flat boolean array where ``True`` = excluded position, or ``None``
-        if *mask* was ``None``.
-    """
-    if mask is None:
-        return None
-    try:
-        import dask.array as da
-    except ImportError:
-        da = None
-
-    if da is not None and isinstance(mask, da.Array):
-        mask = mask.compute()
-    if hasattr(mask, "data"):
-        mask = mask.data  # BaseSignal
-    return np.asarray(mask, dtype=bool).ravel()
-
-
-def _reproject_navigation_scores(D, components):
-    """Compute full-navigation loadings via least-squares projection.
-
-    Solves ``loadings = D @ components / ||components||^2``, which is the
-    least-squares solution to ``components @ loadings ≈ D``.
-
-    Parameters
-    ----------
-    D : ndarray or dask Array, shape (nav, sig)
-        Data matrix.
-    components : ndarray or dask Array, shape (sig, k)
-        Factor matrix.
-
-    Returns
-    -------
-    ndarray or dask Array, shape (nav, k)
-        Loadings matrix.
-    """
-    s_sq = np.einsum("ij,ij->j", components, components)
-    return (D @ components) / s_sq
-
-
-def _reproject_signal_components(D, scores):
-    """Compute full-signal factors via pseudo-inverse.
-
-    Solves ``factors = (pinv(scores) @ D).T`` so the result has shape
-    ``(sig, k)`` matching HyperSpy's factor convention (rows = signal
-    channels, columns = components).
-
-    Parameters
-    ----------
-    D : ndarray, shape (nav, sig)
-        Data matrix.
-    scores : ndarray, shape (nav, k)
-        Loading matrix.
-
-    Returns
-    -------
-    ndarray, shape (sig, k)
-        Factor matrix.
-    """
-    return (np.linalg.pinv(scores) @ D).T
-
-
-def _keenan_kotula_scale(data, navigation_mask, signal_mask, ndim, sdim):
-    """Apply Keenan-Kotula Poisson-noise scaling.
-
-    Implements the variance-stabilising transform described in [Keenan2004]_:
-
-        D_scaled[i,j] = D[i,j] / (sqrt(aG[i]) * sqrt(bH[j]))
-
-    where ``aG[i]`` is the total counts for navigation position *i* (summed
-    over unmasked signal channels) and ``bH[j]`` is the total counts for
-    signal channel *j* (summed over unmasked navigation positions).
-
-    Works for both numpy and dask arrays.  Masked positions contribute
-    zero to the sums and their data values pass through unscaled.
-
-    Parameters
-    ----------
-    data : ndarray or dask Array, shape (nav..., sig...)
-        Data in NumPy axis order (navigation axes first, signal axes last).
-        For 2-D data (*ndim* = 1, *sdim* = 1) the shape is ``(nav, sig)``.
-    navigation_mask : ndarray or None, shape (nav...,)
-        Boolean mask where ``True`` = exclude this navigation position.
-        ``None`` means no navigation masking.
-    signal_mask : ndarray or None, shape (sig...,)
-        Boolean mask where ``True`` = exclude this signal channel.
-        ``None`` means no signal masking.
-    ndim : int
-        Number of navigation dimensions (length of nav axes prefix).
-    sdim : int
-        Number of signal dimensions (length of sig axes suffix).
-
-    Returns
-    -------
-    scaled_data : ndarray or dask Array
-        Data after variance-stabilising scaling, same shape as *data*.
-    sqrt_aG : ndarray or dask Array, shape (nav...,)
-        Square root of total counts per navigation position.
-    sqrt_bH : ndarray or dask Array, shape (sig...,)
-        Square root of total counts per signal channel.
-
-    Raises
-    ------
-    ValueError
-        If negative values are found in the unmasked region or if all
-        data are masked.
-
-    References
-    ----------
-    .. [Keenan2004] M. Keenan and P. Kotula, "Accounting for Poisson
-       noise in the multivariate analysis of ToF-SIMS spectrum images",
-       Surf. Interface Anal 36(3) (2004): 203-212.
-    """
-    import numpy as _np
-
-    # Pick the array backend based on the data type.  We must use the
-    # native backend from the start because numpy ufuncs dispatch to
-    # dask via __array_ufunc__, so _np.logical_not(dask_array) returns
-    # a dask array.
-    _is_dask = hasattr(data, "chunks")
-    if _is_dask:
-        import dask.array as _da
-
-        _lib = _da
-        _nav_chunks = data.chunks[:ndim]
-        _sig_chunks = data.chunks[ndim:]
-    else:
-        _lib = _np
-
-    # "Keep" masks (True = use this position).
-    if navigation_mask is None:
-        nm = (
-            _lib.ones(data.shape[:ndim], dtype=bool, chunks=_nav_chunks)
-            if _is_dask
-            else _lib.ones(data.shape[:ndim], dtype=bool)
-        )
-    else:
-        nm = _lib.logical_not(navigation_mask)
-    if signal_mask is None:
-        sm = (
-            _lib.ones(data.shape[ndim:], dtype=bool, chunks=_sig_chunks)
-            if _is_dask
-            else _lib.ones(data.shape[ndim:], dtype=bool)
-        )
-    else:
-        sm = _lib.logical_not(signal_mask)
-
-    # Broadcast to full data shape: nm → (nav..., 1...), sm → (1..., sig...)
-    nm_bc = nm[(...,) + (None,) * sdim]
-    sm_bc = sm[(None,) * ndim + (...,)]
-    combined = nm_bc & sm_bc
-
-    # Zero out masked entries so they do not contribute to aG / bH.
-    masked_data = _lib.where(combined, data, 0.0)
-
-    # Guard against negative values in the unmasked region.
-    min_val = masked_data.min()
-    if hasattr(min_val, "compute"):
-        min_val = min_val.compute()
-    if min_val < 0.0:
-        raise ValueError(
-            "Negative values found in data!\n"
-            "Are you sure that the data follow a Poisson distribution?"
-        )
-
-    nav_axes = tuple(range(ndim, ndim + sdim))
-    sig_axes = tuple(range(ndim))
-
-    aG = masked_data.sum(axis=nav_axes)
-    bH = masked_data.sum(axis=sig_axes)
-
-    # Materialise sums for dask; check the zero-sum guard on the computed
-    # NumPy values before re-wrapping, because float(dask_array) is not
-    # guaranteed to work across dask versions.
-    if _is_dask:
-        aG, bH = (aG.compute(), bH.compute())
-
-    # aG, bH are now guaranteed numpy arrays — float() below is safe.
-    # The zero-sum guard must run on NumPy values, so re-wrapping aG/bH
-    # as dask arrays is deliberately delayed until after this check.
-    if float(aG.sum()) == 0.0:
-        raise ValueError("All the data are masked, change the mask.")
-
-    # Re-wrap as dask so downstream sqrt / broadcast stays lazy.
-    if _is_dask:
-        aG = _da.from_array(aG)
-        bH = _da.from_array(bH)
-
-    # Avoid division-by-zero for masked positions (they contribute 0 to
-    # the sum so sqrt(0) would be zero — replace with 1 instead).
-    aG = _lib.where(aG == 0, 1, aG)
-    bH = _lib.where(bH == 0, 1, bH)
-
-    sqrt_aG = _lib.sqrt(aG)
-    sqrt_bH = _lib.sqrt(bH)
-
-    coeff = sqrt_aG[(...,) + (None,) * sdim] * sqrt_bH[(None,) * ndim + (...,)]
-    scaled_data = _lib.where(combined, data / coeff, data)
-
-    return scaled_data, sqrt_aG, sqrt_bH
 
 
 class MVA:
@@ -3266,7 +2942,7 @@ class MVA:
         References
         ----------
         .. [1] V. Satopää, J. Albrecht, D. Irwin, and B. Raghavan.
-            "Finding a “Kneedle” in a Haystack: Detecting Knee Points in
+            "Finding a "Kneedle" in a Haystack: Detecting Knee Points in
             System Behavior,. 31st International Conference on Distributed
             Computing Systems Workshops, pp. 166-171, June 2011.
 
@@ -3281,38 +2957,11 @@ class MVA:
                     "A decomposition must be performed before calling "
                     "estimate_elbow_position(), or pass a numpy array directly."
                 )
-
             curve_values = self.learning_results.explained_variance_ratio
         else:
             curve_values = explained_variance_ratio
 
-        max_points = min(max_points, len(curve_values) - 1)
-        # Clipping the curve_values from below with a v.small
-        # number avoids warnings below when taking np.log(0)
-        curve_values_adj = np.clip(curve_values, 1e-30, None)
-
-        x1 = 0
-        x2 = max_points
-
-        if log:
-            y1 = np.log(curve_values_adj[0])
-            y2 = np.log(curve_values_adj[max_points])
-        else:
-            y1 = curve_values_adj[0]
-            y2 = curve_values_adj[max_points]
-
-        xs = np.arange(max_points, like=self.data)
-        if log:
-            ys = np.log(curve_values_adj[:max_points])
-        else:
-            ys = curve_values_adj[:max_points]
-
-        numer = abs((x2 - x1) * (y1 - ys) - (x1 - xs) * (y2 - y1))
-        denom = np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-        distance = np.nan_to_num(numer / denom)
-        elbow_position = np.argmax(distance)
-
-        return elbow_position
+        return estimate_elbow_position(curve_values, log=log, max_points=max_points)
 
 
 class LearningResults(object):
