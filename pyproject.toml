@@ -22,7 +22,7 @@ dependencies = [
     "hyperspy-ml-algorithms @ git+https://github.com/hyperspy/hyperspy-ml-algorithms.git",
     "matplotlib>=3.5",
     "scikit-learn>=1.6",
-    "zarr>=2.16",
+    "zarr>=2.16,<3",
 ]
 description = "Machine learning extension for HyperSpy — MVA decomposition, BSS, and clustering"
 dynamic = ["version"]
