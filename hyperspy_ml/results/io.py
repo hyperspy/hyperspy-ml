@@ -47,7 +47,7 @@ def save_result(result, path, source_signal=None):
     for name in _array_fields(type(result)):
         value = getattr(result, name, None)
         if value is not None:
-            store.create(name, data=np.asarray(value), overwrite=True)
+            store[name] = np.asarray(value)
 
     # Scalar fields as JSON
     scalars = {}
@@ -78,7 +78,7 @@ def save_result(result, path, source_signal=None):
             src_val = sig.data
             if hasattr(src_val, "compute"):
                 src_val = src_val.compute()
-            src_grp.create(src_hash, data=np.asarray(src_val))
+            src_grp[src_hash] = np.asarray(src_val)
 
 
 # ---------------------------------------------------------------------------

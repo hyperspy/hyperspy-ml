@@ -1292,7 +1292,7 @@ def save_result(result, path, source_signal=None):
         value = getattr(result, name, None)
         if value is not None:
             arr = np.asarray(value)
-            store.create(name, data=arr, overwrite=True)
+            store[name] = arr
 
     # Save scalar fields as JSON
     scalar_attrs = {}
@@ -1327,7 +1327,7 @@ def save_result(result, path, source_signal=None):
             src_val = sig.data
             if hasattr(src_val, "compute"):
                 src_val = src_val.compute()
-            src_group.create(src_hash, data=np.asarray(src_val))
+            src_group[src_hash] = np.asarray(src_val)
 
 
 def load_result(path):

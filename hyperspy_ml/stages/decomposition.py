@@ -906,8 +906,9 @@ class Decomposition:
             **self._extra_kwargs,
         )
         loadings = estim.fit_transform(data_, var_array)
-        # MLPCA uses HyperSpy convention: components_ is (sig, k)
-        factors = estim.components_
+        # MLPCA uses sklearn convention: components_ is (k, sig). Transpose to
+        # HyperSpy convention (sig, k).
+        factors = estim.components_.T
         explained_variance: np.ndarray | None = None
         if hasattr(estim, "singular_values_"):
             S = estim.singular_values_
