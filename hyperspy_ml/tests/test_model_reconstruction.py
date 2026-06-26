@@ -261,7 +261,10 @@ class TestCropDecompositionDimension:
         s_lazy = s.as_lazy()
 
         stage = Decomposition(
-            algorithm="SVD", svd_solver="full", output_dimension=rank, print_info=False
+            algorithm="SVD",
+            svd_solver="randomized",
+            output_dimension=rank,
+            print_info=False,
         )
         result = stage.fit_transform(s_lazy)
         result._nav_shape = s.axes_manager.navigation_shape[::-1]

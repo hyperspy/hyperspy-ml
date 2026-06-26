@@ -110,6 +110,9 @@ source = ["hyperspy_ml"]
 addopts = "-ra -n auto --dist loadfile"
 filterwarnings = [
     "ignore:Matplotlib is currently using agg:UserWarning",
+    "ignore:undo_treatments\\(\\) is deprecated.*:VisibleDeprecationWarning",
+    "ignore:svd_solver='full' is deprecated.*:VisibleDeprecationWarning",
+    "ignore:More than 20 figures have been opened:RuntimeWarning",
 ]
 testpaths = ["hyperspy_ml/tests"]
 norecursedirs = [
