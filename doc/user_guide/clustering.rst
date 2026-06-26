@@ -127,7 +127,7 @@ All pre-processing methods from (or compatible with) the
 :external+sklearn:ref:`scikit-learn pre-processing <preprocessing>` module can be passed
 to the ``scaling`` keyword of the :func:`~hyperspy_ml.cluster`
 function.
- For convenience, the following methods from scikit-learn are
+For convenience, the following methods from scikit-learn are
 available as standard: ``standard`` , ``minmax`` and ``norm`` as
 standard. Briefly, ``norm`` treats the features as a vector and normalizes the
 vector length. ``standard`` re-scales each feature by removing the mean and

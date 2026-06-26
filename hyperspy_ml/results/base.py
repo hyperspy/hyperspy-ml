@@ -44,10 +44,11 @@ class DecompositionResult:
     Attributes
     ----------
     components : ndarray, shape (signal_channels, n_components)
-        Factor matrix (transposed components_ from sklearn convention).
-        Rows are signal channels, columns are components.
+        Factor matrix (transposed ``components_`` from sklearn convention).
+        Rows are signal channels, each column is a component.
     scores : ndarray, shape (navigation_pixels, n_components)
-        Loading matrix.  Rows are navigation positions, columns are components.
+        Loading matrix.  Rows are navigation positions, each column is a
+        component.
     bss_components : ndarray or None
         BSS factor matrix, populated after blind source separation.
     bss_scores : ndarray or None
