@@ -27,7 +27,7 @@ jobs:
             os_version: latest
             PYTHON_VERSION: '3.10'
             OLDEST_SUPPORTED_VERSION: true
-            DEPENDENCIES: hyperspy==2.4.0 scikit-learn==1.6.0 matplotlib==3.5.0 array-api-compat==1.9.0 zarr==2.16.0
+            DEPENDENCIES: hyperspy==2.4.0 scikit-learn==1.6.0 matplotlib==3.6.0 array-api-compat==1.9.0 zarr==2.16.0
             LABEL: -oldest
           - os: ubuntu
             os_version: latest
