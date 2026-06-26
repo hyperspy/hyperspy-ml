@@ -19,7 +19,7 @@ classifiers = [
 dependencies = [
     "array-api-compat>=1.9",
     "hyperspy>=2.4",
-    "hyperspy-ml-algorithms @ git+https://github.com/hyperspy/hyperspy-ml-algorithms.git@c86dcd8",
+    "hyperspy-ml-algorithms @ git+https://github.com/hyperspy/hyperspy-ml-algorithms.git",
     "matplotlib>=3.5",
     "scikit-learn>=1.6",
     "zarr>=2.16",
