@@ -116,17 +116,8 @@ class TestORNMF:
 
 
 class TestMLPCA:
-    """Maximum-likelihood PCA decomposition.
+    """Maximum-likelihood PCA decomposition."""
 
-    .. note::
-
-        Skipped in CI: MLPCA is O(n²) iterative ALS — single fit takes
-        ~2 minutes on test data, exceeding CI's 30-minute job timeout
-        when combined with other tests across the matrix. The algorithm
-        is verified correct locally.
-    """
-
-    @pytest.mark.skip(reason="MLPCA too slow for CI — verified correct locally")
     def test_basic_fit_transform(self):
         """MLPCA returns correct shapes on fit_transform."""
         s, n_y, n_x, sig, rank = _make_signal()
@@ -139,7 +130,6 @@ class TestMLPCA:
         assert result.n_components == rank
         assert result.explained_variance is not None
 
-    @pytest.mark.skip(reason="MLPCA too slow for CI — verified correct locally")
     def test_with_var_array(self):
         """MLPCA accepts explicit variance array."""
         s, n_y, n_x, sig, rank = _make_signal()
