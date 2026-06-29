@@ -22,6 +22,7 @@ dependencies = [
     "hyperspy-ml-algorithms @ git+https://github.com/hyperspy/hyperspy-ml-algorithms.git",
     "matplotlib>=3.5",
     "scikit-learn>=1.6",
+    "wrapt>=2",
     "zarr>=2.16",
 ]
 description = "Machine learning extension for HyperSpy — MVA decomposition, BSS, and clustering"
@@ -110,8 +111,8 @@ source = ["hyperspy_ml"]
 addopts = "-ra -n auto --dist loadfile"
 filterwarnings = [
     "ignore:Matplotlib is currently using agg:UserWarning",
-    "ignore:undo_treatments\\(\\) is deprecated.*:VisibleDeprecationWarning",
-    "ignore:svd_solver='full' is deprecated.*:VisibleDeprecationWarning",
+    "ignore:undo_treatments:VisibleDeprecationWarning",
+    "ignore:svd_solver.*full.*deprecated:VisibleDeprecationWarning",
     "ignore:More than 20 figures have been opened:RuntimeWarning",
 ]
 testpaths = ["hyperspy_ml/tests"]
